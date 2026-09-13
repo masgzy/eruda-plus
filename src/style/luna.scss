@@ -335,9 +335,15 @@
   }
 
   .luna-tab-item {
-    &.luna-tab-selected,
+    font-size: 13px;
+    letter-spacing: 0.2px;
+    &.luna-tab-selected {
+      background: var(--contrast);
+      color: var(--accent);
+      font-weight: 500;
+      box-shadow: inset 0 2px 0 var(--accent);
+    }
     &:hover {
-      background: var(--highlight);
       color: var(--select-foreground);
     }
   }
@@ -465,5 +471,49 @@
   .luna-box-model-content {
     color: var(--foreground);
     background: var(--background);
+  }
+
+  // ---- Chrome DevTools look & feel ----
+
+  // Thin DevTools-style scrollbars.
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    &:hover {
+      background: var(--text-color);
+    }
+    border-radius: 0;
+  }
+
+  // Data tables use a monospace face, like DevTools.
+  .luna-data-grid td,
+  .luna-data-grid th {
+    font-family: $font-family-mono;
+    font-size: $font-size-s;
+    text-align: left;
+  }
+
+  // Flat DevTools-style dialog.
+  .luna-modal-body {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .luna-notification-item {
+    border-radius: 2px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    font-size: $font-size;
+  }
+
+  .luna-text-viewer-line-number {
+    color: var(--text-color);
+    user-select: none;
   }
 }
