@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Eruda Enhanced Network Demo</title>
+<style>
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+    background: #f5f6f8;
+    color: #333;
+  }
+  h1 { font-size: 20px; }
+  p.desc { font-size: 13px; color: #666; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  button {
+    padding: 12px 10px;
+    border: 1px solid #d0d3d8;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  button:active { background: #eef2ff; }
+  button b { display: block; font-size: 14px; }
+  button span { color: #888; font-size: 11px; }
+  .tip { margin-top: 14px; font-size: 12px; color: #777; line-height: 1.7; }
+</style>
+</head>
+<body>
+<h1>Eruda 增强版 Network 面板演示</h1>
+<p class="desc">
+  本页面加载了<strong>增强版 eruda</strong>（Network 面板重构版）。点击右侧悬浮按钮打开 eruda，切到 <b>Network</b> 面板，再点下面的按钮发起请求，观察：统计概览条、失败过滤、请求重放、cURL 复制、HAR 导出、请求阻断、DevTools 风格详情（Headers / Cookies / Request / Response / Timing 瀑布图）。
+</p>
+<div class="grid">
+  <button id="b-json"><b>Fetch JSON</b><span>GET /api/json · 200</span></button>
+  <button id="b-slow"><b>Fetch 慢请求</b><span>GET /api/slow · 观察 Timing 瀑布图</span></button>
+  <button id="b-post"><b>Fetch POST JSON</b><span>POST /api/echo · 观察 Request tab</span></button>
+  <button id="b-form"><b>XHR POST 表单</b><span>POST /api/form · urlencoded</span></button>
+  <button id="b-404"><b>Fetch 404</b><span>失败请求 · 红色高亮</span></button>
+  <button id="b-500"><b>XHR 500</b><span>失败请求 · 统计条失败数</span></button>
+  <button id="b-text"><b>Fetch 文本</b><span>GET /api/text</span></button>
+  <button id="b-neterr"><b>Fetch 网络错误</b><span>不存在的端口 · loadingFailed</span></button>
+  <button id="b-block"><b>⚡ 触发被阻断请求</b><span>POST /api/track/ads · 会被黑名单拦截</span></button>
+  <button id="b-blocklist"><b>⚡ 查看阻断规则</b><span>自动填入一条演示规则</span></button>
+</div>
+<p class="tip">
+  阻断演示：点击「查看阻断规则」填入规则并开启（已自动配置拦截 <code>/api/track</code>），再点「触发被阻断请求」— 请求不会发到服务器，列表中以 blocked 标记。<br />
+  重放演示：列表中点击任意请求 → 详情页 → 点 ▶（Replay）。
+</p>
+<script src="../dist/eruda.js"></script>
+<script>
+  eruda.init()
+  // 方便自动化测试
+  window.__erudaReady = true
+
+  function req(name, fn) {
+    document.getElementById(name).addEventListener('click', fn)
+  }
+
+  req('b-json', () => fetch('/api/json?page=1&size=20').then((r) => r.json()).then((d) => console.log('json', d)))
+  req('b-slow', () => fetch('/api/slow').then((r) => r.json()).then((d) => console.log('slow', d)))
+  req('b-post', () =>
+    fetch('/api/echo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Token': 'demo-token-123' },
+      body: JSON.stringify({ username: 'eruda', action: 'demo', count: 42 }),
+    })
+      .then((r) => r.json())
+      .then((d) => console.log('echo', d))
+  )
+  req('b-form', () => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/form')
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded')
+    xhr.onload = () => console.log('form', xhr.responseText)
+    xhr.send('a=1&b=hello+world&c=%E4%B8%AD%E6%96%87')
+  })
+  req('b-404', () => fetch('/api/notfound?id=99').then((r) => r.json()).catch((e) => console.log('404', e)))
+  req('b-500', () => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('GET', '/api/error')
+    xhr.onloadend = () => console.log('500 done', xhr.status)
+    xhr.send()
+  })
+  req('b-text', () => fetch('/api/text').then((r) => r.text()).then((d) => console.log('text', d)))
+  req('b-neterr', () =>
+    fetch('http://localhost:9/never', { mode: 'no-cors' }).catch((e) => console.log('neterr', e.message))
+  )
+  req('b-block', () =>
+    fetch('/api/track/ads?campaign=demo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'pageview' }),
+    })
+      .then((r) => console.log('track status:', r.status, r.statusText))
+      .catch((e) => console.log('track err', e.message))
+  )
+  req('b-blocklist', () => {
+    // 打开 eruda network 的阻断面板并填入演示规则
+    eruda.show(); eruda._devTools.showTool("network")
+    const el = document.querySelector('.eruda-network .eruda-icon-block')
+    if (el) el.click()
+    setTimeout(() => {
+      const ta = document.querySelector('.eruda-bp-patterns')
+      const cb = document.querySelector('.eruda-bp-enable')
+      if (ta && !ta.value) ta.value = '# 演示：拦截所有 /api/track 请求\n/api/track'
+      if (cb) cb.checked = true
+    }, 100)
+  })
+</script>
+</body>
+</html>

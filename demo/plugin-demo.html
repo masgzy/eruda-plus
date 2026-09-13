@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>eruda-network-plus Plugin Demo</title>
+<style>
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+    background: #f5f6f8;
+    color: #333;
+  }
+  h1 { font-size: 20px; }
+  p.desc { font-size: 13px; color: #666; line-height: 1.6; }
+  code { background: #e8eaed; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  button {
+    padding: 12px 10px;
+    border: 1px solid #d0d3d8;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  button b { display: block; font-size: 14px; }
+  button span { color: #888; font-size: 11px; }
+  pre.setup {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    overflow-x: auto;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<h1>eruda-network-plus 插件演示</h1>
+<p class="desc">
+  本页面以<strong>插件模式</strong>运行：官方原版 eruda（CDN 加载）+ <code>eruda-network-plus.js</code> 独立增强插件。
+  插件通过 <code>eruda.remove('network')</code> + <code>eruda.add(new erudaNetworkPlus())</code> 挂载，替换内置 Network 面板，标签名显示为 <b>network+</b>。
+</p>
+<pre setup class="setup">
+eruda.init()
+eruda.remove('network')
+eruda.add(new erudaNetworkPlus())
+</pre>
+<div class="grid">
+  <button id="b-json"><b>Fetch JSON</b><span>GET /api/json · 200</span></button>
+  <button id="b-slow"><b>Fetch 慢请求</b><span>观察 Timing 瀑布图</span></button>
+  <button id="b-post"><b>Fetch POST JSON</b><span>Request tab 展示</span></button>
+  <button id="b-404"><b>Fetch 404</b><span>失败高亮 + 失败筛选</span></button>
+  <button id="b-block"><b>⊘ 触发被阻断请求</b><span>/api/track/ads · 黑名单拦截</span></button>
+  <button id="b-setup-block"><b>⊘ 配置阻断规则</b><span>自动填入 /api/track</span></button>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+<script>
+  // CDN fallback: if jsdelivr is unreachable, use the local eruda build
+  if (!window.eruda) {
+    document.write('<script src="../dist/eruda.js"><\/script>')
+  }
+</script>
+<script src="../dist/eruda-network-plus.js"></script>
+<script>
+  eruda.init()
+  eruda.remove('network')
+  eruda.add(new erudaNetworkPlus())
+  window.__erudaReady = true
+
+  function req(name, fn) {
+    document.getElementById(name).addEventListener('click', fn)
+  }
+  req('b-json', () => fetch('/api/json?page=1&size=20').then((r) => r.json()).then((d) => console.log('json', d)))
+  req('b-slow', () => fetch('/api/slow').then((r) => r.json()).then((d) => console.log('slow', d)))
+  req('b-post', () =>
+    fetch('/api/echo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Token': 'demo-456' },
+      body: JSON.stringify({ username: 'plugin-demo', count: 7 }),
+    }).then((r) => r.json()).then((d) => console.log('echo', d))
+  )
+  req('b-404', () => fetch('/api/notfound?id=99').catch((e) => console.log('404')))
+  req('b-block', () =>
+    fetch('/api/track/ads?campaign=demo', { method: 'POST', body: 'event=pageview' })
+      .then((r) => console.log('track status:', r.status))
+      .catch((e) => console.log('track err', e.message))
+  )
+  req('b-setup-block', () => {
+    try {
+      localStorage.setItem(
+        'eruda_network_plus_blocklist',
+        JSON.stringify({ enabled: true, patterns: '/api/track' })
+      )
+      alert('已写入阻断规则 /api/track，刷新页面后生效（插件启动时读取）')
+    } catch (e) {}
+  })
+</script>
+</body>
+</html>
