@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 420" font-family="Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2d31"/>
+      <stop offset="1" stop-color="#202124"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#05b08e"/>
+      <stop offset="1" stop-color="#3dd68c"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="540" height="400" rx="16" fill="url(#bg)" stroke="#3c4043" stroke-width="2"/>
+  <rect x="10" y="10" width="540" height="44" rx="16" fill="#292a2d"/>
+  <rect x="10" y="38" width="540" height="16" fill="#292a2d"/>
+  <circle cx="36" cy="32" r="6" fill="#ef5350"/>
+  <circle cx="58" cy="32" r="6" fill="#ffca28"/>
+  <circle cx="80" cy="32" r="6" fill="#66bb6a"/>
+  <!-- tabs -->
+  <g font-size="15" fill="#9aa0a6">
+    <text x="120" y="38">Console</text>
+    <text x="215" y="38">Elements</text>
+    <text x="320" y="38" fill="#8ab4f8">Network</text>
+    <text x="420" y="38">Sources</text>
+  </g>
+  <rect x="316" y="46" width="80" height="3" rx="1.5" fill="#8ab4f8"/>
+  <!-- request rows -->
+  <g font-size="14">
+    <text x="36" y="86" fill="#9aa0a6">Name</text>
+    <text x="300" y="86" fill="#9aa0a6">Method</text>
+    <text x="410" y="86" fill="#9aa0a6">Status</text>
+    <line x1="26" y1="96" x2="534" y2="96" stroke="#3c4043"/>
+    <text x="36" y="122" fill="#e8eaed">/api/user</text>
+    <text x="300" y="122" fill="#e8eaed">GET</text>
+    <text x="410" y="122" fill="#81c995">200</text>
+    <text x="36" y="152" fill="#e8eaed">/api/login</text>
+    <text x="300" y="152" fill="#e8eaed">POST</text>
+    <text x="410" y="152" fill="#81c995">200</text>
+    <rect x="20" y="168" width="524" height="30" rx="4" fill="rgba(154,24,17,.25)"/>
+    <text x="36" y="188" fill="#e8eaed">/api/order</text>
+    <text x="300" y="188" fill="#e8eaed">GET</text>
+    <text x="410" y="188" fill="#f28b82">500</text>
+    <text x="36" y="248" fill="#e8eaed">/mock-demo</text>
+    <text x="300" y="248" fill="#e8eaed">GET</text>
+    <text x="410" y="248" fill="#fdd663">500 *</text>
+    <text x="36" y="278" fill="#e8eaed">/blocked</text>
+    <text x="300" y="278" fill="#e8eaed">GET</text>
+    <text x="410" y="278" fill="#f28b82">403</text>
+  </g>
+  <!-- waterfall bar -->
+  <rect x="470" y="108" width="60" height="8" rx="4" fill="url(#accent)" opacity=".9"/>
+  <rect x="482" y="138" width="48" height="8" rx="4" fill="url(#accent)" opacity=".9"/>
+  <rect x="470" y="234" width="30" height="8" rx="4" fill="#fdd663" opacity=".8"/>
+  <!-- console error block -->
+  <rect x="20" y="304" width="524" height="86" rx="8" fill="rgba(154,24,17,.22)"/>
+  <circle cx="42" cy="330" r="8" fill="#ef3842"/>
+  <path d="M38 326l8 8M46 326l-8 8" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+  <text x="60" y="336" fill="#f28b82" font-size="14">Uncaught TypeError: res.data is undefined</text>
+  <text x="60" y="360" fill="#e8eaed" font-size="13" opacity=".85">    at renderOrder (app.js:120:15)</text>
+  <text x="60" y="380" fill="#8ab4f8" font-size="13">app.js:120</text>
+</svg>

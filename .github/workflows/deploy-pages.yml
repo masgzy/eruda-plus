@@ -1,20 +1,21 @@
 # ============================================================================
-# Deploy the landing site (site/) to GitHub Pages.
+# Build the VitePress site (site/) and deploy it to GitHub Pages.
 #
-# Why the official Actions flow instead of a `gh-pages` branch?
-#   1. No extra branch pollution — the site is built straight from `site/`
-#      on the default branch; nothing to keep in sync or force-push.
-#   2. Atomic deployments with built-in rollback via the `github-pages`
-#      environment, and least-privilege OIDC (`id-token: write`).
-#   3. The `CNAME` file inside `site/` is shipped with the artifact, so the
-#      custom domain (eruda.cc.cd) is applied automatically on every deploy.
+# Pipeline mirrors EasyTier's deploy workflow (VitePress + official Pages
+# Actions) with two fixes/extra:
+#   - `branches: [main]` — EasyTier's own workflow ships a corrupted
+#     `branches: ain]` trigger; deploys only fired via manual dispatch there.
+#   - The CNAME file ships from site/public/ so the custom domain
+#     (eruda.cc.cd) is applied on every deploy, and we re-register it via
+#     the Pages API (idempotent) because workflow deploys need it set
+#     explicitly on the Pages site.
 #
 # No manual repo setting needed: `configure-pages` runs with `enablement:
 # true`, so the workflow's own GITHUB_TOKEN (pages: write) turns the Pages
 # source on automatically on first deploy.
+#
 # Custom domain DNS (eruda.cc.cd):
 #   CNAME  eruda.cc.cd  →  masgzy.github.io.
-#   (or A/AAAA records to the Pages anycast IPs if using an apex)
 # ============================================================================
 
 name: Deploy site to GitHub Pages
@@ -24,6 +25,7 @@ on:
     branches: [main]
     paths:
       - 'site/**'
+      - 'dist/**'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
@@ -45,6 +47,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # lastUpdated needs full git history
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -66,10 +78,18 @@ jobs:
           echo "PATCH /pages -> $code"
           cat /tmp/pages-resp.json
 
+      - name: Install site dependencies
+        working-directory: site
+        run: npm ci
+
+      - name: Build VitePress site
+        working-directory: site
+        run: npm run build
+
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: site/.vitepress/dist
 
       - name: Deploy to GitHub Pages
         id: deployment

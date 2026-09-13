@@ -1,0 +1,63 @@
+# ============================================================================
+# Publish eruda-plus to npm via OIDC Trusted Publishing — no NPM_TOKEN.
+#
+# How it works (npm "Trusted Publishing", GA since July 2025):
+#   1. This workflow's GitHub OIDC token (id-token: write) proves to npm
+#      that the publish request comes from masgzy/eruda-plus.
+#   2. npm checks it against the Trusted Publishing settings configured on
+#      npmjs.com for the `eruda-plus` package.
+#   3. Provenance attestations are generated automatically (npm >= 11.5.1).
+#
+# ONE-TIME setup on npmjs.com (package `eruda-plus` → Settings →
+# Publishing access / Trusted Publisher):
+#   - Repository:  masgzy/eruda-plus
+#   - Workflow:    publish.yml
+#   - Environment: (leave empty — this workflow doesn't use one)
+#
+# Triggers: pushing a `v*` tag (e.g. `git tag v0.2.0 && git push --tags`)
+# or running it manually from the Actions tab.
+# ============================================================================
+
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required for npm to verify the workflow via OIDC (trusted publishing).
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        # No lockfile is committed for the library itself, so install.
+        run: npm install --no-audit --no-fund
+
+      - name: Build dist
+        run: npm run build
+
+      - name: Check publish contents
+        run: |
+          npm pack --dry-run
+          test -f dist/eruda.js || { echo "dist/eruda.js missing"; exit 1; }
+
+      - name: Publish (OIDC, no token)
+        run: npm publish --provenance --access public
