@@ -136,13 +136,17 @@ npx webpack --config build/webpack.prod.js
 | :---: | :---: |
 | ![中文 Network](./docs/screenshots/v3_zh_network.png) | ![英文分屏](./docs/screenshots/v3_en_detail_split.png) |
 
+| 移动端 · 紧凑列 | 暗色主题 · Network 保留日志 |
+| :---: | :---: |
+| ![移动端](./docs/screenshots/v3_zh_mobile.png) | ![暗色](./docs/screenshots/12-network-preserve-dark.png) |
+
 | 规则面板（阻断/重写/Mock） | Console · Watch + 保留日志 |
 | :---: | :---: |
 | ![规则面板](./docs/screenshots/v3_en_rules.png) | ![Console](./docs/screenshots/08-console-watch-preserve-zh.png) |
 
-| Elements · DOM 搜索 | 暗色主题 · Network 保留日志 |
+| Elements · DOM 搜索 | 官网 · 内嵌在线实测 |
 | :---: | :---: |
-| ![DOM 搜索](./docs/screenshots/10-elements-dom-search-zh.png) | ![暗色](./docs/screenshots/12-network-preserve-dark.png) |
+| ![DOM 搜索](./docs/screenshots/10-elements-dom-search-zh.png) | ![官网](https://eruda.cc.cd/) |
 
 更多截图见 [docs/screenshots](./docs/screenshots/)。
 

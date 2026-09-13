@@ -1,6 +1,6 @@
 {
   "name": "eruda-plus",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Enhanced mobile web console: eruda with Chrome DevTools experience (bilingual UI, DevTools-style Network panel, block/rewrite/mock/throttle, HAR, Live Expressions and more)",
   "main": "eruda.js",
   "browserslist": [
@@ -34,7 +34,11 @@
     "eruda",
     "proxy",
     "har",
-    "inspect"
+    "inspect",
+    "network-panel",
+    "mock",
+    "throttling",
+    "mobile-debug"
   ],
   "author": "masgzy",
   "license": "MIT",
@@ -99,5 +103,11 @@
     "type": "individual",
     "url": "https://github.com/sponsors/masgzy"
   },
-  "originalAuthor": "liriliri (https://github.com/liriliri/eruda)"
+  "originalAuthor": "liriliri (https://github.com/liriliri/eruda)",
+  "files": [
+    "dist",
+    "patch",
+    "eruda.d.ts",
+    "README.md"
+  ]
 }

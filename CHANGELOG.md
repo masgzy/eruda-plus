@@ -16,6 +16,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
+以 Chrome DevTools 真实前端（chrome-devtools-frontend.appspot.com serve_rev，Chrome 151 同版）为像素级参照的 UI 保真版本；官网按 VitePress / EasyTier 设计语言重做并内嵌在线实测。
+
+### 中文
+
+#### 新增
+
+- **筛选 Chips 对齐官方分组**：新增 `Manifest / WS / Wasm` 分组（共 12 个），未选中态带 1px 描边，选中态为色调蓝胶囊，与 DevTools 请求过滤条一致
+- **状态码列着色**：2xx 绿 / 3xx 橙 / 4xx·5xx 红 / pending 灰 / 屏蔽 403 红，数字着色而非整行变色（对齐 DevTools）
+- **HTTP 方法着色**：GET 蓝 / POST 绿 / PUT 橙 / DELETE 红 / PATCH 紫，窄屏一眼可辨
+- **Network 空状态**：`正在录制网络活动` + `刷新页面` 按钮（对齐 DevTools "Currently recording network activity"）
+- **详情面板 Provisional headers 黄色提示条**：请求标头缺失时显示（对齐 DevTools 同名机制），附官方文档链接
+- **详情顶部单行化**：关闭按钮 + 七个 Tab + 重放/复制操作合并为一行，不再遮挡标头内容
+- **移动端紧凑列**：<480px 自动隐藏 Type / Initiator 列，名称、方法、状态、瀑布图保持可读
+- **官网重做**：VitePress（EasyTier 同款设计语言）极简风，首页直接内嵌 eruda-plus 在线实测（iframe 自动打开 Network 面板），支持亮暗主题切换
+
+#### 变更
+
+- **中文术语全表对齐 Chrome DevTools 官方 l10n**（zh.json 逐条核对）：标头 / 载荷 / 启动器 / 时间 / 瀑布 / 保留日志 / 已停用节流模式 / 屏蔽 / DNS 查找 / 初始连接 / 正在排队 / 已发送请求 / 下载内容 等；Sources → 来源、Snippets → 代码段、Event Listeners → 事件监听器
+- **Overview 时序带重写**：按真实 timing 分段着色（排队灰 / DNS 青 / 连接橙 / SSL 紫 / 等待绿 / 下载蓝），失败整段红，与 DevTools NetworkOverview 行为一致
+- **数据行高 21px → 24px**（触控友好），名称列改等宽字体（对齐 DevTools monospace 风格）
+- **Timing 面板配色统一**为 DevTools NetworkTimingColumn 同款色板
+- **键值表样式**：键名改为常规灰色（对齐官方），状态码前加彩色圆点
+
+### English
+
+#### Added
+
+- **Filter chips aligned with official groups**: added `Manifest / WS / Wasm` (12 total), unselected pills with 1px outline, selected with tonal-blue fill, matching the DevTools request filter bar
+- **Status column coloring**: 2xx green / 3xx amber / 4xx·5xx red / pending gray / blocked 403 red — the number is painted, not the whole row
+- **HTTP method coloring**: GET blue / POST green / PUT amber / DELETE red / PATCH purple
+- **Network empty state**: "Currently recording network activity" with a "Reload page" button, matching DevTools
+- **Provisional headers banner** in the detail view when request headers are unavailable, with the official docs link
+- **Single-row detail header**: close button + seven tabs + replay/copy actions on one line, no more overlap
+- **Compact mobile columns**: below 480px the Type / Initiator columns hide automatically
+- **New website**: VitePress design language (same family as the EasyTier site) with an embedded live demo that auto-opens the Network panel, plus light/dark toggle
+
+#### Changed
+
+- **All Chinese terms aligned with Chrome DevTools official zh-CN l10n** (verified against zh.json)
+- **Overview band now paints real timing segments** per request, matching NetworkOverview behavior
+- **Row height 21px → 24px** for touch; request names rendered in monospace
+- **Timing panel palette** unified with NetworkTimingColumn colors
+
 ## [0.1.1] - 2026-09-13
 
 UI 保真度版本：将网络面板与全局设计令牌进一步对齐 Chrome DevTools 官方源码。
@@ -191,6 +236,7 @@ Chrome DevTools experience to mobile web debugging.
 - `dist/eruda-network-plus.js` — standalone network panel plugin
 - `patch/eruda-devtools-edition.patch` — source patch based on eruda v3.4.3
 
-[Unreleased]: https://github.com/masgzy/eruda-plus/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/masgzy/eruda-plus/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/masgzy/eruda-plus/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/masgzy/eruda-plus/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/masgzy/eruda-plus/releases/tag/v0.1.0
