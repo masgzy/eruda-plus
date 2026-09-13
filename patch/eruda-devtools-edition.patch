@@ -1,0 +1,5865 @@
+diff --git a/src/Console/Console.js b/src/Console/Console.js
+old mode 100644
+new mode 100755
+index 665d34d..3a27d40
+--- a/src/Console/Console.js
++++ b/src/Console/Console.js
+@@ -6,18 +6,29 @@ import isFn from 'licia/isFn'
+ import Emitter from 'licia/Emitter'
+ import isStr from 'licia/isStr'
+ import isRegExp from 'licia/isRegExp'
++import startWith from 'licia/startWith'
++import endWith from 'licia/endWith'
+ import uncaught from 'licia/uncaught'
+ import trim from 'licia/trim'
+ import upperFirst from 'licia/upperFirst'
+ import isHidden from 'licia/isHidden'
+-import isNull from 'licia/isNull'
+ import isArr from 'licia/isArr'
+ import extend from 'licia/extend'
++import map from 'licia/map'
+ import evalCss from '../lib/evalCss'
+ import Settings from '../Settings/Settings'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import LunaConsole from 'luna-console'
+-import LunaModal from 'luna-modal'
+-import { classPrefix as c } from '../lib/util'
++import each from 'licia/each'
++import escape from 'licia/escape'
++import contain from 'licia/contain'
++import {
++  classPrefix as c,
++  safeStringify,
++  savePreservedLogs,
++  loadPreservedLogs,
++} from '../lib/util'
+ 
+ uncaught.start()
+ 
+@@ -29,6 +40,10 @@ export default class Console extends Tool {
+ 
+     this.name = name
+     this._selectedLog = null
++    this._watchOpen = false
++    this._watchExprs = []
++    this._watchValues = []
++    this._logBuffer = []
+   }
+   init($el, container) {
+     super.init($el)
+@@ -41,6 +56,11 @@ export default class Console extends Tool {
+     this._initLogger()
+     this._exposeLogger()
+     this._bindEvent()
++
++    this._initWatch()
++    this._restorePreservedLogs()
++
++    emitter.on(emitter.I18N, this._onI18n)
+   }
+   show() {
+     super.show()
+@@ -103,10 +123,13 @@ export default class Console extends Tool {
+     }
+   }
+   destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
+     this._logger.destroy()
+     super.destroy()
+ 
+     this._container.off('show', this._handleShow)
++    if (this._watchTimer) clearInterval(this._watchTimer)
++    window.removeEventListener('pagehide', this._savePreservedLogs)
+ 
+     if (this._style) {
+       evalCss.remove(this._style)
+@@ -120,7 +143,7 @@ export default class Console extends Tool {
+     this._logger.renderViewport()
+   }
+   _handleErr = (err) => {
+-    this._logger.error(err)
++    this.error(err)
+   }
+   _enableJsExecution(enabled) {
+     const $el = this._$el
+@@ -142,19 +165,31 @@ export default class Console extends Tool {
+       c(`
+       <div class="control">
+         <span class="icon-clear clear-console"></span>
+-        <span class="level active" data-level="all">All</span>
+-        <span class="level" data-level="info">Info</span>
+-        <span class="level" data-level="warning">Warning</span>
+-        <span class="level" data-level="error">Error</span>
++        <span class="level active" data-level="all">${t('All')}</span>
++        <span class="level" data-level="info">${t('Info')}</span>
++        <span class="level" data-level="warning">${t('Warning')}</span>
++        <span class="level" data-level="error">${t('Error')}</span>
+         <span class="filter-text"></span>
+         <span class="icon-filter filter"></span>
+         <span class="icon-copy icon-disabled copy"></span>
++        <span class="icon-eye watch"></span>
++      </div>
++      <div class="filter-row">
++        <span class="icon-filter"></span>
++        <input class="filter-input" placeholder="${t('filterPh')}" spellcheck="false">
++      </div>
++      <div class="watch-panel">
++        <div class="watch-rows"></div>
++        <div class="watch-add-row">
++          <span class="watch-plus">+</span>
++          <input class="watch-input" placeholder="${t('watchPh')}" spellcheck="false">
++        </div>
+       </div>
+       <div class="logs-container"></div>
+       <div class="js-input">
+         <div class="buttons">
+-          <div class="button cancel">Cancel</div>
+-          <div class="button execute">Execute</div>
++          <div class="button cancel">${t('Cancel')}</div>
++          <div class="button execute">${t('Execute')}</div>
+         </div>
+         <span class="icon-right"></span>
+         <textarea></textarea>
+@@ -173,6 +208,11 @@ export default class Console extends Tool {
+       _$input,
+       _$inputBtns,
+       _$filterText: $el.find(c('.filter-text')),
++      _$filterRow: $el.find(c('.filter-row')),
++      _$filterInput: $el.find(c('.filter-input')),
++      _$watchPanel: $el.find(c('.watch-panel')),
++      _$watchRows: $el.find(c('.watch-rows')),
++      _$watchInput: $el.find(c('.watch-input')),
+     })
+   }
+   _initLogger() {
+@@ -217,16 +257,76 @@ export default class Console extends Tool {
+         (this[name] = (...args) => {
+           logger[name](...args)
+           this.emit(name, ...args)
++          this._bufferLog(name, args)
+ 
+           return this
+         })
+     )
+   }
++  _bufferLog(name, args) {
++    if (!this.config || !this.config.get('preserveLog')) return
++    if (!contain(CONSOLE_METHOD, name) || name === 'groupEnd') return
++    if (name === 'clear') {
++      this._logBuffer = []
++      return
++    }
++    if (name === 'group' || name === 'groupCollapsed') return
++
++    const text = map(args, (arg) => safeStringify(arg)).join(' ')
++    this._logBuffer.push({
++      level: name === 'debug' ? 'verbose' : name,
++      text,
++      time: Date.now(),
++    })
++    if (this._logBuffer.length > 300) this._logBuffer.shift()
++  }
++  _savePreservedLogs = () => {
++    if (!this.config || !this.config.get('preserveLog')) return
++    if (this._logBuffer.length === 0) return
++
++    const data = loadPreservedLogs('console') || { logs: [] }
++    data.logs = this._logBuffer.slice(-300)
++    savePreservedLogs('console', data)
++  }
++  _restorePreservedLogs() {
++    if (!this.config.get('preserveLog')) return
++
++    const data = loadPreservedLogs('console')
++    if (!data || !data.logs || data.logs.length === 0) return
++
++    this._logger.html(
++      `<div class="${c('restored-divider')}">${escape(
++        t('restoredFromSession')
++      )}</div>`
++    )
++    each(data.logs.slice(-300), (log) => {
++      const level = contain(
++        ['verbose', 'info', 'warning', 'error'],
++        log.level
++      )
++        ? log.level
++        : 'info'
++      const dte = new Date(log.time)
++      const pad = (n) => (n < 10 ? '0' + n : '' + n)
++      const time = `${pad(dte.getHours())}:${pad(dte.getMinutes())}:${pad(
++        dte.getSeconds()
++      )}`
++      this._logger.html(
++        `<div class="${c('restored-log')} ${c('restored-' + level)}">
++          <span class="${c('restored-time')}">${time}</span>${escape(
++          log.text
++        )}
++        </div>`
++      )
++    })
++    this._logBuffer = []
++  }
+   _bindEvent() {
+     const container = this._container
+     const $input = this._$input
+     const $inputBtns = this._$inputBtns
+     const $control = this._$control
++    const self = this
+ 
+     const logger = this._logger
+     const config = this.config
+@@ -241,16 +341,55 @@ export default class Console extends Tool {
+         logger.setOption('level', level)
+       })
+       .on('click', c('.filter'), () => {
+-        LunaModal.prompt('Filter').then((filter) => {
+-          if (isNull(filter)) return
+-          this.filter(filter)
+-        })
++        this._$filterRow.toggleClass(c('active'))
++        if (this._$filterRow.hasClass(c('active'))) {
++          this._$filterInput.get(0).focus()
++        }
+       })
++      .on('click', c('.watch'), () => this._toggleWatch())
+       .on('click', c('.copy'), () => {
+         this._selectedLog.copy()
+-        container.notify('Copied', { icon: 'success' })
++        container.notify(t('Copied'), { icon: 'success' })
++      })
++
++    this._$filterInput
++      .on('input', () => {
++        const text = this._$filterInput.val() || ''
++        this._$filterText.text(text)
++        this._applyFilter(text)
++      })
++      .on('keydown', (e) => {
++        if (e.key === 'Escape') {
++          this._$filterInput.val('')
++          this._$filterText.text('')
++          this._applyFilter('')
++          this._$filterRow.rmClass(c('active'))
++        }
++      })
++
++    this._$watchPanel
++      .on('click', c('.watch-del'), function () {
++        const idx = +$(this).parent().data('idx')
++        self._removeWatch(idx)
++      })
++      .on('click', c('.watch-val'), function () {
++        const idx = +$(this).parent().data('idx')
++        const val = self._watchValues[idx]
++        const sources = self._container.get('sources')
++        if (val !== undefined && sources) {
++          sources.set('object', val)
++          self._container.showTool('sources')
++        }
+       })
+ 
++    this._$watchInput.on('keydown', (e) => {
++      if (e.key !== 'Enter') return
++      const expr = this._$watchInput.val().trim()
++      if (expr === '') return
++      this._addWatch(expr)
++      this._$watchInput.val('')
++    })
++
+     $inputBtns
+       .on('click', c('.cancel'), () => this._hideInput())
+       .on('click', c('.execute'), () => {
+@@ -260,6 +399,7 @@ export default class Console extends Tool {
+         logger.evaluate(jsInput)
+         $input.val('').get(0).blur()
+         this._hideInput()
++        this._evalWatches()
+       })
+ 
+     $input.on('focusin', () => this._showInput())
+@@ -282,6 +422,120 @@ export default class Console extends Tool {
+ 
+     container.on('show', this._handleShow)
+   }
++  _onI18n = () => {
++    const $control = this._$control
++    if (!$control) return
++    const levels = {
++      all: 'All',
++      info: 'Info',
++      warning: 'Warning',
++      error: 'Error',
++    }
++    $control.find(c('.level')).each(function () {
++      const $this = $(this)
++      $this.text(t(levels[$this.data('level')]))
++    })
++    this._$inputBtns.find(c('.cancel')).text(t('Cancel'))
++    this._$inputBtns.find(c('.execute')).text(t('Execute'))
++    this._$filterInput.attr('placeholder', t('filterPh'))
++    this._$watchInput.attr('placeholder', t('watchPh'))
++    this._renderWatch()
++  }
++  _applyFilter(text) {
++    text = trim(text)
++    if (startWith(text, '/') && endWith(text, '/') && text.length > 2) {
++      try {
++        this.filter(new RegExp(text.slice(1, -1), 'i'))
++        return
++      } catch {
++        // Invalid regex, fall through to plain text filter
++      }
++    }
++    this.filter(text)
++  }
++  _initWatch() {
++    try {
++      const saved = localStorage.getItem('eruda-console-watch')
++      if (saved) this._watchExprs = JSON.parse(saved).slice(0, 6)
++    } catch {
++      this._watchExprs = []
++    }
++    if (this._watchExprs.length > 0) this._toggleWatch()
++    this._renderWatch()
++    this._watchTimer = setInterval(() => {
++      if (this._watchOpen) this._evalWatches()
++    }, 1000)
++  }
++  _toggleWatch() {
++    this._watchOpen = !this._watchOpen
++    this._$watchPanel.toggleClass(c('active'))
++    this._$control.find(c('.watch')).toggleClass(c('active'))
++    if (this._watchOpen) {
++      this._evalWatches()
++      this._renderWatch()
++    }
++  }
++  _addWatch(expr) {
++    if (this._watchExprs.length >= 6) this._watchExprs.shift()
++    this._watchExprs.push(expr)
++    this._saveWatch()
++    this._evalWatches()
++    this._renderWatch()
++  }
++  _removeWatch(idx) {
++    this._watchExprs.splice(idx, 1)
++    this._watchValues.splice(idx, 1)
++    this._saveWatch()
++    this._renderWatch()
++  }
++  _saveWatch() {
++    try {
++      localStorage.setItem('eruda-console-watch', JSON.stringify(this._watchExprs))
++    } catch {
++      // Ignore
++    }
++  }
++  _evalWatches() {
++    const exprs = this._watchExprs
++    this._watchValues = []
++    each(exprs, (expr, i) => {
++      try {
++        // eslint-disable-next-line no-eval
++        this._watchValues[i] = (0, eval)(expr)
++      } catch (e) {
++        this._watchValues[i] = undefined
++        this._watchValues['_' + i] = e
++      }
++    })
++    this._renderWatchValues()
++  }
++  _renderWatchValues() {
++    each(this._watchExprs, (expr, i) => {
++      const $val = this._$watchRows.find(c('.watch-val')).eq(i)
++      if ($val.length === 0) return
++      const err = this._watchValues['_' + i]
++      if (err) {
++        $val.text(`${err.name}: ${err.message}`).addClass(c('watch-err'))
++      } else {
++        const val = this._watchValues[i]
++        const text =
++          val === undefined ? 'undefined' : safeStringify(val, 200)
++        $val.text(text).rmClass(c('watch-err'))
++      }
++    })
++  }
++  _renderWatch() {
++    if (!this._$watchRows) return
++    const rows = map(this._watchExprs, (expr, i) => {
++      return `<div class="${c('watch-row')}" data-idx="${i}">
++        <span class="${c('watch-expr')}">${escape(expr)}</span>
++        <span class="${c('watch-val')}" data-idx="${i}"></span>
++        <span class="${c('icon-delete watch-del')}"></span>
++      </div>`
++    }).join('')
++    this._$watchRows.html(rows)
++    this._renderWatchValues()
++  }
+   _hideInput() {
+     this._$inputContainer.rmClass(c('active'))
+     this._$inputBtns.css('display', 'none')
+@@ -307,6 +561,7 @@ export default class Console extends Tool {
+       .remove(cfg, 'lazyEvaluation')
+       .remove(cfg, 'displayIfErr')
+       .remove(cfg, 'maxLogNum')
++      .remove(cfg, 'preserveLog')
+       .remove(upperFirst(this.name))
+   }
+   _initCfg() {
+@@ -323,10 +578,14 @@ export default class Console extends Tool {
+       lazyEvaluation: true,
+       displayIfErr: false,
+       maxLogNum: 'infinite',
++      preserveLog: false,
+     }))
+ 
+     this._enableJsExecution(cfg.get('jsExecution'))
+     if (cfg.get('catchGlobalErr')) this.catchGlobalErr()
++    if (cfg.get('preserveLog')) {
++      window.addEventListener('pagehide', this._savePreservedLogs)
++    }
+ 
+     cfg.on('change', (key, val) => {
+       const logger = this._logger
+@@ -349,6 +608,14 @@ export default class Console extends Tool {
+           return logger.setOption('accessGetter', val)
+         case 'lazyEvaluation':
+           return logger.setOption('lazyEvaluation', val)
++        case 'preserveLog':
++          if (val) {
++            window.addEventListener('pagehide', this._savePreservedLogs)
++          } else {
++            window.removeEventListener('pagehide', this._savePreservedLogs)
++            this._logBuffer = []
++          }
++          return
+       }
+     })
+ 
+@@ -366,6 +633,7 @@ export default class Console extends Tool {
+       .switch(cfg, 'displayUnenumerable', 'Display Unenumerable Properties')
+       .switch(cfg, 'displayGetterVal', 'Access Getter Value')
+       .switch(cfg, 'lazyEvaluation', 'Lazy Evaluation')
++      .switch(cfg, 'preserveLog', 'Preserve Log')
+       .select(cfg, 'maxLogNum', 'Max Log Number', [
+         'infinite',
+         '250',
+diff --git a/src/Console/Console.scss b/src/Console/Console.scss
+old mode 100644
+new mode 100755
+index ac1846b..f1c3e54
+--- a/src/Console/Console.scss
++++ b/src/Console/Console.scss
+@@ -6,9 +6,15 @@
+   padding-bottom: 24px;
+   width: 100%;
+   height: 100%;
++  display: flex;
++  flex-direction: column;
+   &.js-input-hidden {
+     padding-bottom: 0;
+   }
++  .logs-container {
++    flex: 1;
++    min-height: 0;
++  }
+   .control {
+     padding: 10px 10px 10px 35px;
+     @include control();
+@@ -40,12 +46,150 @@
+       white-space: nowrap;
+       position: absolute;
+       line-height: 20px;
+-      max-width: 80px;
++      max-width: 60px;
+       overflow: hidden;
+-      right: 55px;
++      right: 78px;
+       font-size: $font-size;
+       text-overflow: ellipsis;
+     }
++    .icon-eye {
++      right: 46px;
++    }
++  }
++  .filter-row {
++    display: none;
++    align-items: center;
++    height: 30px;
++    padding: 0 10px;
++    background: var(--darker-background);
++    border-bottom: 1px solid var(--border);
++    .icon-filter {
++      font-size: $font-size-l;
++      color: var(--accent);
++      margin-right: 8px;
++      flex: none;
++    }
++    &.active {
++      display: flex;
++    }
++    input {
++      flex: 1;
++      height: 22px;
++      border: none;
++      outline: none;
++      background: var(--background);
++      color: var(--primary);
++      font-size: $font-size;
++      padding: 0 8px;
++      border-radius: 3px;
++      user-select: text;
++      font-family: $font-family;
++    }
++  }
++  .watch-panel {
++    display: none;
++    background: var(--darker-background);
++    border-bottom: 1px solid var(--border);
++    max-height: 150px;
++    overflow: auto;
++    font-size: $font-size;
++    &.active {
++      display: block;
++    }
++    .watch-row {
++      display: flex;
++      align-items: center;
++      padding: 3px 10px;
++      border-top: 1px solid var(--border);
++      &:first-child {
++        border-top: none;
++      }
++      .watch-expr {
++        flex: none;
++        max-width: 45%;
++        overflow: hidden;
++        text-overflow: ellipsis;
++        white-space: nowrap;
++        color: var(--accent);
++      }
++      .watch-val {
++        flex: 1;
++        min-width: 0;
++        margin-left: 8px;
++        overflow: hidden;
++        text-overflow: ellipsis;
++        white-space: nowrap;
++        color: var(--primary);
++        font-family: $font-family-mono;
++        font-size: $font-size-s;
++        cursor: pointer;
++        user-select: text;
++        &.watch-err {
++          color: var(--console-error-foreground);
++        }
++      }
++      .icon-delete {
++        flex: none;
++        padding: 4px;
++        font-size: $font-size;
++        cursor: pointer;
++        color: var(--primary);
++        opacity: 0.6;
++      }
++    }
++    .watch-add-row {
++      display: flex;
++      align-items: center;
++      padding: 3px 10px;
++      border-top: 1px solid var(--border);
++      .watch-plus {
++        color: var(--accent);
++        font-weight: bold;
++        margin-right: 8px;
++        flex: none;
++      }
++      input {
++        flex: 1;
++        height: 22px;
++        border: none;
++        outline: none;
++        background: var(--background);
++        color: var(--primary);
++        font-size: $font-size;
++        padding: 0 8px;
++        border-radius: 3px;
++        user-select: text;
++        font-family: $font-family;
++      }
++    }
++  }
++  .restored-divider {
++    padding: 3px 10px;
++    color: var(--foreground);
++    font-style: italic;
++    font-size: $font-size-s;
++    border-bottom: 1px dashed var(--border);
++    opacity: 0.8;
++  }
++  .restored-log {
++    padding: 2px 10px;
++    font-family: $font-family-mono;
++    font-size: $font-size-s;
++    color: var(--foreground);
++    word-break: break-all;
++    opacity: 0.75;
++    .restored-time {
++      margin-right: 8px;
++      opacity: 0.7;
++    }
++    &.restored-error {
++      color: var(--console-error-foreground);
++      opacity: 1;
++    }
++    &.restored-warning {
++      color: var(--console-warn-foreground);
++      opacity: 1;
++    }
+   }
+   .js-input {
+     pointer-events: none;
+diff --git a/src/DevTools/DevTools.js b/src/DevTools/DevTools.js
+old mode 100644
+new mode 100755
+index 39902b8..068b4da
+--- a/src/DevTools/DevTools.js
++++ b/src/DevTools/DevTools.js
+@@ -20,6 +20,7 @@ import pointerEvent from 'licia/pointerEvent'
+ import evalCss from '../lib/evalCss'
+ import emitter from '../lib/emitter'
+ import { isDarkTheme } from '../lib/themes'
++import { t, getLang, setLang, detectLang } from '../lib/i18n'
+ import LunaNotification from 'luna-notification'
+ import LunaModal from 'luna-modal'
+ import LunaTab from 'luna-tab'
+@@ -39,6 +40,7 @@ export default class DevTools extends Emitter {
+         transparency: 1,
+         displaySize: 80,
+         theme: 'System preference',
++        language: 'auto',
+       },
+       defaults
+     )
+@@ -120,12 +122,12 @@ export default class DevTools extends Emitter {
+     if (name === 'settings') {
+       tab.append({
+         id: name,
+-        title: name,
++        title: t(upperFirst(name)),
+       })
+     } else {
+       tab.insert(tab.length - 1, {
+         id: name,
+-        title: name,
++        title: t(upperFirst(name)),
+       })
+     }
+ 
+@@ -191,6 +193,10 @@ export default class DevTools extends Emitter {
+   initCfg(settings) {
+     const cfg = (this.config = Settings.createCfg('dev-tools', this._defCfg))
+ 
++    // Apply the saved language before any tool renders.
++    const savedLang = cfg.get('language')
++    if (savedLang === 'en' || savedLang === 'zh') setLang(savedLang)
++
+     this._setTransparency(cfg.get('transparency'))
+     this._setDisplaySize(cfg.get('displaySize'))
+     this._setTheme(cfg.get('theme'))
+@@ -203,15 +209,25 @@ export default class DevTools extends Emitter {
+           return this._setDisplaySize(val)
+         case 'theme':
+           return this._setTheme(val)
++        case 'language':
++          return val === 'auto' ? setLang(detectLang()) : setLang(val)
+       }
+     })
+ 
+     settings
+       .separator()
+-      .select(cfg, 'theme', 'Theme', [
+-        'System preference',
+-        ...keys(evalCss.getThemes()),
+-      ])
++      .select(cfg, 'language', 'Language / 语言', {
++        auto: 'Follow System',
++        en: 'English',
++        zh: '中文',
++      })
++
++    const themeOptions = {}
++    each(
++      ['System preference', ...keys(evalCss.getThemes())],
++      (theme) => (themeOptions[theme] = t(theme))
++    )
++    settings.select(cfg, 'theme', 'Theme', themeOptions)
+ 
+     if (!this._inline) {
+       settings
+@@ -251,6 +267,7 @@ export default class DevTools extends Emitter {
+   }
+   destroy() {
+     evalCss.remove(this._style)
++    emitter.off(emitter.I18N, this._onI18n)
+     this.removeAll()
+     this._tab.destroy()
+     this._$el.remove()
+@@ -338,6 +355,30 @@ export default class DevTools extends Emitter {
+   }
+   _initModal() {
+     LunaModal.setContainer(this._$el.find(c('.modal')).get(0))
++    // Sync luna-modal button texts (OK / Cancel) with our language.
++    if (LunaModal.i18n) {
++      LunaModal.i18n.locale(getLang() === 'zh' ? 'zh-CN' : 'en-US')
++    }
++  }
++  _onI18n = () => {
++    if (LunaModal.i18n) {
++      LunaModal.i18n.locale(getLang() === 'zh' ? 'zh-CN' : 'en-US')
++    }
++    this._updateTabTitles()
++  }
++  _updateTabTitles() {
++    // Update titles in place — luna-tab's remove() refuses to delete
++    // the last remaining item, so rebuilding the strip is unsafe.
++    this._$el
++      .find(c('.tab'))
++      .find('.luna-tab-item')
++      .each(function () {
++        const $item = $(this)
++        const id = $item.data('id')
++        if (!id) return
++        $item.find('.luna-tab-title').text(t(upperFirst(id)))
++      })
++    nextTick(() => this._tab.updateSlider())
+   }
+   _bindEvent() {
+     const $resizer = this._$el.find(c('.resizer'))
+@@ -397,6 +438,7 @@ export default class DevTools extends Emitter {
+     window.addEventListener('resize', this._checkSafeArea)
+ 
+     emitter.on(emitter.SCALE, this._updateTabHeight)
++    emitter.on(emitter.I18N, this._onI18n)
+ 
+     theme.on('change', () => {
+       const t = this.config.get('theme')
+diff --git a/src/DevTools/DevTools.scss b/src/DevTools/DevTools.scss
+old mode 100644
+new mode 100755
+diff --git a/src/DevTools/Tool.js b/src/DevTools/Tool.js
+old mode 100644
+new mode 100755
+diff --git a/src/Elements/CssStore.js b/src/Elements/CssStore.js
+old mode 100644
+new mode 100755
+diff --git a/src/Elements/Detail.js b/src/Elements/Detail.js
+old mode 100644
+new mode 100755
+index 29c2d9f..aac99bb
+--- a/src/Elements/Detail.js
++++ b/src/Elements/Detail.js
+@@ -24,6 +24,8 @@ import Settings from '../Settings/Settings'
+ import LunaModal from 'luna-modal'
+ import LunaBoxModel from 'luna-box-model'
+ import chobitsu from '../lib/chobitsu'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import { formatNodeName } from './util'
+ import { isErudaEl, classPrefix as c } from '../lib/util'
+ 
+@@ -36,6 +38,16 @@ export default class Detail {
+     this._initCfg()
+     this._initTpl()
+     this._bindEvent()
++    emitter.on(emitter.I18N, this._onI18n)
++  }
++  destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
++    this._disableObserver()
++    this.restoreEventTarget()
++    this._rmCfg()
++  }
++  _onI18n = () => {
++    if (this._$container.css('display') !== 'none') this._render()
+   }
+   show(el) {
+     this._curEl = el
+@@ -50,11 +62,6 @@ export default class Detail {
+     this._disableObserver()
+     chobitsu.domain('Overlay').hideHighlight()
+   }
+-  destroy() {
+-    this._disableObserver()
+-    this.restoreEventTarget()
+-    this._rmCfg()
+-  }
+   overrideEventTarget() {
+     const winEventProto = getWinEventProto()
+ 
+@@ -149,7 +156,7 @@ export default class Detail {
+ 
+     $elementName.html(data.name)
+ 
+-    let attributes = '<tr><td>Empty</td></tr>'
++    let attributes = `<tr><td>${t('Empty')}</td></tr>`
+     if (!isEmpty(data.attributes)) {
+       attributes = map(data.attributes, ({ name, value }) => {
+         return `<tr>
+@@ -158,7 +165,7 @@ export default class Detail {
+         </tr>`
+       }).join('')
+     }
+-    attributes = `<h2>Attributes</h2>
++    attributes = `<h2>${t('Attributes')}</h2>
+     <div class="${c('table-wrapper')}">
+       <table>
+         <tbody>
+@@ -182,7 +189,7 @@ export default class Detail {
+           <div>}</div>
+         </div>`
+       }).join('')
+-      styles = `<h2>Styles</h2>
++      styles = `<h2>${t('Styles')}</h2>
+       <div class="${c('style-wrapper')}">
+         ${style}
+       </div>`
+@@ -203,7 +210,7 @@ export default class Detail {
+       }
+ 
+       computedStyle = `<h2>
+-        Computed Style
++        ${t('Computed Style')}
+         ${toggleButton}
+         <div class="${c('btn computed-style-search')}">
+           <span class="${c('icon-filter')}"></span>
+@@ -252,7 +259,7 @@ export default class Detail {
+           </ul>
+         </div>`
+       }).join('')
+-      listeners = `<h2>Event Listeners</h2>
++      listeners = `<h2>${t('Event Listeners')}</h2>
+       <div class="${c('listener-wrapper')}">
+         ${listeners} 
+       </div>`
+@@ -314,7 +321,7 @@ export default class Detail {
+         this._toggleAllComputedStyle()
+       )
+       .on('click', c('.computed-style-search'), () => {
+-        LunaModal.prompt('Filter').then((filter) => {
++        LunaModal.prompt(t('Filter')).then((filter) => {
+           if (isNull(filter)) return
+           filter = trim(filter)
+           this._computedStyleSearchKeyword = filter
+@@ -341,7 +348,7 @@ export default class Detail {
+       .on('click', c('.back'), this.hide)
+       .on('click', c('.refresh'), () => {
+         this._render()
+-        devtools.notify('Refreshed', { icon: 'success' })
++        devtools.notify(t('Refreshed'), { icon: 'success' })
+       })
+ 
+     this._boxModel.on('highlight', this._highlight)
+diff --git a/src/Elements/Elements.js b/src/Elements/Elements.js
+old mode 100644
+new mode 100755
+index 375b160..40c5c4f
+--- a/src/Elements/Elements.js
++++ b/src/Elements/Elements.js
+@@ -10,12 +10,16 @@ import toNum from 'licia/toNum'
+ import copy from 'licia/copy'
+ import isMobile from 'licia/isMobile'
+ import isShadowRoot from 'licia/isShadowRoot'
++import trim from 'licia/trim'
++import contain from 'licia/contain'
++import throttle from 'licia/throttle'
+ import LunaDomViewer from 'luna-dom-viewer'
+ import { isErudaEl, classPrefix as c, isChobitsuEl } from '../lib/util'
+ import evalCss from '../lib/evalCss'
+ import Detail from './Detail'
+ import chobitsu from '../lib/chobitsu'
+ import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import { formatNodeName } from './util'
+ 
+ export default class Elements extends Tool {
+@@ -28,6 +32,9 @@ export default class Elements extends Tool {
+     this._selectElement = false
+     this._observeElement = true
+     this._history = []
++    this._searchOpen = false
++    this._searchMatches = []
++    this._searchIdx = -1
+ 
+     Emitter.mixin(this)
+   }
+@@ -50,6 +57,8 @@ export default class Elements extends Tool {
+     this._bindEvent()
+     chobitsu.domain('Overlay').enable()
+ 
++    emitter.on(emitter.I18N, this._onI18n)
++
+     nextTick(() => this._updateHistory())
+   }
+   show() {
+@@ -77,6 +86,7 @@ export default class Elements extends Tool {
+   destroy() {
+     super.destroy()
+ 
++    emitter.off(emitter.I18N, this._onI18n)
+     emitter.off(emitter.SCALE, this._updateScale)
+     evalCss.remove(this._style)
+     this._detail.destroy()
+@@ -90,11 +100,15 @@ export default class Elements extends Tool {
+     const $control = this._$control
+     const $showDetail = $control.find(c('.show-detail'))
+     const $copyNode = $control.find(c('.copy-node'))
++    const $copySelector = $control.find(c('.copy-selector'))
++    const $copyXpath = $control.find(c('.copy-xpath'))
+     const $deleteNode = $control.find(c('.delete-node'))
+     const iconDisabled = c('icon-disabled')
+ 
+     $showDetail.addClass(iconDisabled)
+     $copyNode.addClass(iconDisabled)
++    $copySelector.addClass(iconDisabled)
++    $copyXpath.addClass(iconDisabled)
+     $deleteNode.addClass(iconDisabled)
+ 
+     const node = this._curNode
+@@ -103,6 +117,11 @@ export default class Elements extends Tool {
+       return
+     }
+ 
++    if (node.nodeType === Node.ELEMENT_NODE) {
++      $copySelector.rmClass(iconDisabled)
++      $copyXpath.rmClass(iconDisabled)
++    }
++
+     if (node !== document.documentElement && node !== document.body) {
+       $deleteNode.rmClass(iconDisabled)
+     }
+@@ -131,7 +150,17 @@ export default class Elements extends Tool {
+           <span class="icon icon-select select"></span>
+           <span class="icon icon-eye show-detail"></span>
+           <span class="icon icon-copy copy-node"></span>
++          <span class="txt-btn copy-selector" title="${t('Copy selector')}">{ }</span>
++          <span class="txt-btn copy-xpath" title="${t('Copy XPath')}">//</span>
+           <span class="icon icon-delete delete-node"></span>
++          <span class="icon icon-search dom-search-btn"></span>
++        </div>
++        <div class="search-bar">
++          <input class="search-input" placeholder="${t('searchDomPh')}" spellcheck="false">
++          <span class="search-count"></span>
++          <span class="search-nav search-prev">↑</span>
++          <span class="search-nav search-next">↓</span>
++          <span class="search-close">×</span>
+         </div>
+         <div class="dom-viewer-container">
+           <div class="dom-viewer"></div>
+@@ -145,6 +174,20 @@ export default class Elements extends Tool {
+     this._$domViewer = $el.find(c('.dom-viewer'))
+     this._$control = $el.find(c('.control'))
+     this._$crumbs = $el.find(c('.crumbs'))
++    this._$searchBar = $el.find(c('.search-bar'))
++    this._$searchInput = $el.find(c('.search-input'))
++    this._$searchCount = $el.find(c('.search-count'))
++  }
++  _onI18n = () => {
++    if (!this._$searchInput) return
++    this._$searchInput.attr('placeholder', t('searchDomPh'))
++    this._$control.find(c('.copy-selector')).attr('title', t('Copy selector'))
++    this._$control.find(c('.copy-xpath')).attr('title', t('Copy XPath'))
++    this._$control.find(c('.dom-search-btn')).attr('title', t('Search DOM'))
++    if (this._searchMatches.length === 0 && this._$searchCount) {
++      const val = this._$searchInput.val()
++      if (val && this._searchOpen) this._$searchCount.text(t('noMatches'))
++    }
+   }
+   _renderCrumbs() {
+     const crumbs = getCrumbs(this._curNode)
+@@ -188,7 +231,24 @@ export default class Elements extends Tool {
+       .on('click', c('.select'), this._toggleSelect)
+       .on('click', c('.show-detail'), this._showDetail)
+       .on('click', c('.copy-node'), this._copyNode)
++      .on('click', c('.copy-selector'), this._copySelector)
++      .on('click', c('.copy-xpath'), this._copyXpath)
+       .on('click', c('.delete-node'), this._deleteNode)
++      .on('click', c('.dom-search-btn'), this._toggleSearch)
++
++    this._$searchInput.on('keydown', (e) => {
++      if (e.key === 'Enter') {
++        e.preventDefault()
++        this._runDomSearch(e.shiftKey ? 'prev' : 'next')
++      } else if (e.key === 'Escape') {
++        this._toggleSearch()
++      }
++    })
++    this._$searchInput.on('input', this._onSearchInput)
++    this._$searchBar
++      .on('click', c('.search-next'), () => this._runDomSearch('next'))
++      .on('click', c('.search-prev'), () => this._runDomSearch('prev'))
++      .on('click', c('.search-close'), this._toggleSearch)
+ 
+     this._domViewer.on('select', this._setNode).on('deselect', this._back)
+ 
+@@ -226,7 +286,103 @@ export default class Elements extends Tool {
+       copy(node.nodeValue)
+     }
+ 
+-    this._container.notify('Copied', { icon: 'success' })
++    this._container.notify(t('Copied'), { icon: 'success' })
++  }
++  _copySelector = () => {
++    const node = this._curNode
++    if (!node || node.nodeType !== Node.ELEMENT_NODE) return
++
++    copy(getCssPath(node))
++    this._container.notify(t('Copied'), { icon: 'success' })
++  }
++  _copyXpath = () => {
++    const node = this._curNode
++    if (!node || node.nodeType !== Node.ELEMENT_NODE) return
++
++    copy(getXPath(node))
++    this._container.notify(t('Copied'), { icon: 'success' })
++  }
++  _toggleSearch = () => {
++    const active = c('active')
++    this._searchOpen = !this._searchOpen
++    this._$searchBar.toggleClass(active)
++    this._$control.find(c('.dom-search-btn')).toggleClass(active)
++    if (this._searchOpen) {
++      this._$searchInput.get(0).focus()
++    } else {
++      this._$searchInput.val('')
++      this._$searchCount.text('')
++      this._searchMatches = []
++      this._searchIdx = -1
++    }
++  }
++  _onSearchInput = throttle(() => {
++    this._searchIdx = -1
++    this._runDomSearch()
++  }, 300)
++  _runDomSearch = (goNext) => {
++    const query = trim(this._$searchInput.val() || '')
++    const matches = []
++
++    if (query !== '') {
++      // Try CSS selector first, then fall back to full-text search.
++      try {
++        const els = document.querySelectorAll(query)
++        for (let i = 0; i < els.length && matches.length < 500; i++) {
++          matches.push(els[i])
++        }
++      } catch {
++        // Invalid selector, treat as text search below.
++      }
++      if (matches.length === 0) {
++        const lower = query.toLowerCase()
++        const walker = document.createTreeWalker(
++          document.documentElement,
++          NodeFilter.SHOW_TEXT,
++          {
++            acceptNode: (node) => {
++              const parent = node.parentElement
++              if (!parent || isErudaEl(parent)) return NodeFilter.FILTER_REJECT
++              const tag = parent.tagName
++              if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
++                return NodeFilter.FILTER_REJECT
++              }
++              if (node.nodeValue && contain(node.nodeValue.toLowerCase(), lower)) {
++                return NodeFilter.FILTER_ACCEPT
++              }
++              return NodeFilter.FILTER_SKIP
++            },
++          }
++        )
++        while (walker.nextNode() && matches.length < 500) {
++          const el = walker.currentNode.parentElement
++          if (el && !contain(matches, el)) matches.push(el)
++        }
++      }
++    }
++
++    this._searchMatches = matches
++    if (matches.length === 0) {
++      this._$searchCount.text(query === '' ? '' : t('noMatches'))
++      return
++    }
++
++    if (goNext === 'next') {
++      this._searchIdx = (this._searchIdx + 1) % matches.length
++    } else if (goNext === 'prev') {
++      this._searchIdx =
++        (this._searchIdx - 1 + matches.length) % matches.length
++    } else {
++      this._searchIdx = this._searchIdx >= 0 ? this._searchIdx : 0
++    }
++
++    this._$searchCount.text(`${this._searchIdx + 1} / ${matches.length}`)
++    const node = matches[this._searchIdx]
++    try {
++      if (isElExist(node)) this.select(node)
++    } catch {
++      // Node may be detached between search and select.
++    }
+   }
+   _toggleSelect = () => {
+     this._$el.find(c('.select')).toggleClass(c('active'))
+@@ -323,3 +479,58 @@ function getCrumbs(el) {
+ 
+   return ret.reverse()
+ }
++
++function getCssPath(el) {
++  if (!(el instanceof Element)) return ''
++
++  const parts = []
++  while (el && el.nodeType === Node.ELEMENT_NODE) {
++    if (el.id) {
++      parts.unshift(`#${el.id}`)
++      break
++    }
++
++    let selector = el.tagName.toLowerCase()
++
++    // nth-of-type index among same-tag siblings
++    let nth = 1
++    let sib = el.previousElementSibling
++    while (sib) {
++      if (sib.tagName === el.tagName) nth++
++      sib = sib.previousElementSibling
++    }
++
++    if (el.className && typeof el.className === 'string') {
++      const classes = trim(el.className)
++        .split(/\s+/)
++        .filter((name) => name && name.indexOf('eruda-') !== 0)
++        .slice(0, 2)
++      if (classes.length > 0) selector += `.${classes.join('.')}`
++    }
++
++    parts.unshift(`${selector}:nth-of-type(${nth})`)
++    el = el.parentElement
++  }
++
++  return parts.join(' > ')
++}
++
++function getXPath(el) {
++  if (!(el instanceof Element)) return ''
++
++  if (el.id) return `//*[@id="${el.id}"]`
++
++  const parts = []
++  while (el && el.nodeType === Node.ELEMENT_NODE) {
++    let idx = 1
++    let sib = el.previousElementSibling
++    while (sib) {
++      if (sib.tagName === el.tagName) idx++
++      sib = sib.previousElementSibling
++    }
++    parts.unshift(`${el.tagName.toLowerCase()}[${idx}]`)
++    el = el.parentElement
++  }
++
++  return parts.length > 0 ? `/${parts.join('/')}` : ''
++}
+diff --git a/src/Elements/Elements.scss b/src/Elements/Elements.scss
+old mode 100644
+new mode 100755
+index f68f94f..ff0ec5c
+--- a/src/Elements/Elements.scss
++++ b/src/Elements/Elements.scss
+@@ -17,8 +17,94 @@
+     .icon-copy {
+       right: 23px;
+     }
++    .txt-btn {
++      position: absolute;
++      top: 0;
++      padding: 10px 5px;
++      font-size: $font-size;
++      line-height: 20px;
++      cursor: pointer;
++      color: var(--primary);
++      font-family: $font-family-mono;
++      transition: color $anim-duration;
++      &:active,
++      &.active {
++        color: var(--accent);
++      }
++    }
++    .copy-selector {
++      right: 69px;
++    }
++    .copy-xpath {
++      right: 95px;
++    }
+     .icon-delete {
+-      right: 46px;
++      right: 121px;
++    }
++    .icon-select {
++      left: 0;
++    }
++    .icon-search {
++      right: 142px;
++      &.active {
++        color: var(--accent);
++      }
++    }
++  }
++  .search-bar {
++    @include absolute(100%, 30px);
++    top: 40px;
++    display: none;
++    align-items: center;
++    padding: 0 8px;
++    background: var(--darker-background);
++    border-bottom: 1px solid var(--border);
++    z-index: 5;
++    &.active {
++      display: flex;
++    }
++    input {
++      flex: 1;
++      min-width: 0;
++      height: 22px;
++      border: none;
++      outline: none;
++      background: var(--background);
++      color: var(--primary);
++      font-size: $font-size;
++      padding: 0 8px;
++      border-radius: 3px;
++      user-select: text;
++      font-family: $font-family;
++    }
++    .search-count {
++      flex: none;
++      margin: 0 6px;
++      font-size: $font-size-s;
++      color: var(--primary);
++      white-space: nowrap;
++    }
++    .search-nav {
++      flex: none;
++      padding: 4px 7px;
++      cursor: pointer;
++      color: var(--primary);
++      font-size: $font-size;
++      user-select: none;
++      &:active {
++        color: var(--accent);
++      }
++    }
++    .search-close {
++      flex: none;
++      padding: 4px 7px;
++      cursor: pointer;
++      color: var(--primary);
++      font-size: $font-size-l;
++      user-select: none;
++      &:active {
++        color: var(--accent);
++      }
+     }
+   }
+   .dom-viewer-container {
+diff --git a/src/Elements/util.js b/src/Elements/util.js
+old mode 100644
+new mode 100755
+diff --git a/src/EntryBtn/EntryBtn.js b/src/EntryBtn/EntryBtn.js
+old mode 100644
+new mode 100755
+diff --git a/src/EntryBtn/EntryBtn.scss b/src/EntryBtn/EntryBtn.scss
+old mode 100644
+new mode 100755
+diff --git a/src/Info/Info.js b/src/Info/Info.js
+old mode 100644
+new mode 100755
+index b338710..e17fd8a
+--- a/src/Info/Info.js
++++ b/src/Info/Info.js
+@@ -10,6 +10,8 @@ import escape from 'licia/escape'
+ import copy from 'licia/copy'
+ import $ from 'licia/$'
+ import { classPrefix as c } from '../lib/util'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ 
+ export default class Info extends Tool {
+   constructor() {
+@@ -26,8 +28,11 @@ export default class Info extends Tool {
+ 
+     this._addDefInfo()
+     this._bindEvent()
++
++    emitter.on(emitter.I18N, this._onI18n)
+   }
+   destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
+     super.destroy()
+ 
+     evalCss.remove(this._style)
+@@ -85,13 +90,17 @@ export default class Info extends Tool {
+   _addDefInfo() {
+     each(defInfo, (info) => this.add(info.name, info.val))
+   }
++  _onI18n = () => {
++    // Re-render even when hidden so the next open shows the new language.
++    this._render()
++  }
+   _render() {
+     const infos = []
+ 
+     each(this._infos, ({ name, val }) => {
+       if (isFn(val)) val = val()
+ 
+-      infos.push({ name, val })
++      infos.push({ name: t(name), val })
+     })
+ 
+     const html = `<ul>${map(
+diff --git a/src/Info/Info.scss b/src/Info/Info.scss
+old mode 100644
+new mode 100755
+diff --git a/src/Info/defInfo.js b/src/Info/defInfo.js
+old mode 100644
+new mode 100755
+index e85a1ed..1892b53
+--- a/src/Info/defInfo.js
++++ b/src/Info/defInfo.js
+@@ -2,6 +2,7 @@ import detectBrowser from 'licia/detectBrowser'
+ import detectOs from 'licia/detectOs'
+ import escape from 'licia/escape'
+ import map from 'licia/map'
++import { t } from '../lib/i18n'
+ 
+ const browser = detectBrowser()
+ 
+@@ -18,24 +19,28 @@ export default [
+   },
+   {
+     name: 'Device',
+-    val: [
+-      '<table><tbody>',
+-      `<tr><td class="eruda-device-key">screen</td><td>${screen.width} * ${screen.height}</td></tr>`,
+-      `<tr><td>viewport</td><td>${window.innerWidth} * ${window.innerHeight}</td></tr>`,
+-      `<tr><td>pixel ratio</td><td>${window.devicePixelRatio}</td></tr>`,
+-      '</tbody></table>',
+-    ].join(''),
++    val() {
++      return [
++        '<table><tbody>',
++        `<tr><td class="eruda-device-key">${t('screen')}</td><td>${screen.width} * ${screen.height}</td></tr>`,
++        `<tr><td>${t('viewport')}</td><td>${window.innerWidth} * ${window.innerHeight}</td></tr>`,
++        `<tr><td>${t('pixel ratio')}</td><td>${window.devicePixelRatio}</td></tr>`,
++        '</tbody></table>',
++      ].join('')
++    },
+   },
+   {
+     name: 'System',
+-    val: [
+-      '<table><tbody>',
+-      `<tr><td class="eruda-system-key">os</td><td>${detectOs()}</td></tr>`,
+-      `<tr><td>browser</td><td>${
+-        browser.name + ' ' + browser.version
+-      }</td></tr>`,
+-      '</tbody></table>',
+-    ].join(''),
++    val() {
++      return [
++        '<table><tbody>',
++        `<tr><td class="eruda-system-key">${t('os')}</td><td>${detectOs()}</td></tr>`,
++        `<tr><td>${t('browser')}</td><td>${
++          browser.name + ' ' + browser.version
++        }</td></tr>`,
++        '</tbody></table>',
++      ].join('')
++    },
+   },
+   {
+     name: 'Sponsor this Project',
+@@ -45,7 +50,7 @@ export default [
+         map(
+           [
+             {
+-              name: 'Open Collective',
++              name: t('Open Collective'),
+               link: 'https://opencollective.com/eruda',
+             },
+             {
+@@ -53,7 +58,7 @@ export default [
+               link: 'https://ko-fi.com/surunzi',
+             },
+             {
+-              name: 'Wechat Pay',
++              name: t('Wechat Pay'),
+               link: 'https://surunzi.com/wechatpay.html',
+             },
+           ],
+diff --git a/src/Network/Detail.js b/src/Network/Detail.js
+old mode 100644
+new mode 100755
+index 99719e4..4e2d4c6
+--- a/src/Network/Detail.js
++++ b/src/Network/Detail.js
+@@ -1,13 +1,40 @@
++import $ from 'licia/$'
+ import trim from 'licia/trim'
+ import isEmpty from 'licia/isEmpty'
+-import map from 'licia/map'
+ import each from 'licia/each'
++import map from 'licia/map'
+ import escape from 'licia/escape'
+ import copy from 'licia/copy'
+-import isJson from 'licia/isJson'
+ import Emitter from 'licia/Emitter'
+ import truncate from 'licia/truncate'
++import emitter from '../lib/emitter'
++import contain from 'licia/contain'
+ import { classPrefix as c } from '../lib/util'
++import {
++  curlStr,
++  fetchStr,
++  parseQueryParams,
++  prettyJson,
++  getCookieList,
++  getTimingSegments,
++  toHeadersArray,
++  formatMs,
++  jsonTreeHtml,
++  initiatorLabel,
++  t,
++} from './util'
++
++const TABS = [
++  { id: 'headers', key: 'headers' },
++  { id: 'payload', key: 'payload' },
++  { id: 'preview', key: 'preview' },
++  { id: 'response', key: 'response' },
++  { id: 'cookies', key: 'cookies' },
++  { id: 'initiator', key: 'initiator' },
++  { id: 'timing', key: 'timing' },
++]
++
++const MAX_RES_LEN = 100000
+ 
+ export default class Detail extends Emitter {
+   constructor($container, devtools) {
+@@ -15,138 +42,424 @@ export default class Detail extends Emitter {
+     this._$container = $container
+     this._devtools = devtools
+ 
+-    this._detailData = {}
++    this._request = null
++    this._activeTab = 'headers'
+     this._bindEvent()
++    emitter.on(emitter.I18N, this._onI18n)
++  }
++  destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
++  }
++  _onI18n = () => {
++    // Re-render the open detail view so labels follow the new language.
++    if (this._request && this._$container.css('display') !== 'none') {
++      this._render()
++    }
+   }
+   show(data) {
+-    if (data.resTxt && trim(data.resTxt) === '') {
+-      delete data.resTxt
++    this._request = data
++    this._activeTab = 'headers'
++    this._render()
++    this._$container.show()
++  }
++  hide() {
++    this._$container.hide()
++    this.emit('hide')
++  }
++  _render() {
++    const data = this._request
++    const tabsHtml = map(TABS, (tab) => {
++      const active = tab.id === this._activeTab ? c('active') : ''
++      return `<div class="${c('tab')} ${active}" data-tab="${tab.id}">${t(tab.key)}</div>`
++    }).join('')
++
++    const html = `<div class="${c('control')}">
++      <span class="${c('icon-left back')}"></span>
++      <span class="${c('icon-delete back')}"></span>
++      <span class="${c('url')}">${escape(data.method)} ${escape(data.url)}</span>
++      <span class="${c('icon-play replay')}" title="${t('replay')}"></span>
++      <span class="${c('icon-curl copy-curl')}" title="${t('copyCurl')}"></span>
++      <span class="${c('copy-fetch')}" title="${t('copyFetch')}">{ }</span>
++      <span class="${c('icon-copy copy-res')}" title="${t('copyResponse')}"></span>
++    </div>
++    <div class="${c('tabs')}">${tabsHtml}</div>
++    <div class="${c('tab-content')}"></div>`
++
++    this._$container.html(html)
++    this._$content = this._$container.find(c('.tab-content'))
++    this._renderTab()
++  }
++  _renderTab() {
++    const data = this._request
++
++    // Update active tab class.
++    each(TABS, (tab) => {
++      const $tab = this._$container.find(`[data-tab="${tab.id}"]`)
++      if (tab.id === this._activeTab) {
++        $tab.addClass(c('active'))
++      } else {
++        $tab.rmClass(c('active'))
++      }
++    })
++
++    let html = ''
++    switch (this._activeTab) {
++      case 'headers':
++        html = this._headersHtml(data)
++        break
++      case 'payload':
++        html = this._requestHtml(data)
++        break
++      case 'preview':
++        html = this._previewHtml(data)
++        break
++      case 'response':
++        html = this._responseHtml(data)
++        break
++      case 'cookies':
++        html = this._cookiesHtml()
++        break
++      case 'initiator':
++        html = this._initiatorHtml(data)
++        break
++      case 'timing':
++        html = this._timingHtml(data)
++        break
+     }
+-    if (isEmpty(data.resHeaders)) {
+-      delete data.resHeaders
++
++    this._$content.html(html)
++  }
++  _section(title, body, startCollapsed = false) {
++    const collapsed = startCollapsed ? c('collapsed') : ''
++    return `<div class="${c('section')} ${collapsed}">
++      <h2 class="${c('sec-title')}"><span class="${c('icon-caret-down caret')}"></span>${escape(title)}</h2>
++      <div class="${c('section-body')}">${body}</div>
++    </div>`
++  }
++  _kvTable(rows, keyTitle = t('Name'), valTitle = t('Value')) {
++    if (isEmpty(rows)) {
++      return `<table class="${c('headers')}"><tbody><tr><td>${t(
++        'Empty'
++      )}</td></tr></tbody></table>`
+     }
+-    if (isEmpty(data.reqHeaders)) {
+-      delete data.reqHeaders
++    const tr = map(rows, (row) => {
++      return `<tr>
++        <td class="${c('key')}">${escape(row.name)}</td>
++        <td>${escape(row.value)}</td>
++      </tr>`
++    }).join('')
++    return `<table class="${c('headers')}"><thead><tr><th class="${c(
++      'key'
++    )}">${escape(keyTitle)}</th><th>${escape(
++      valTitle
++    )}</th></tr></thead><tbody>${tr}</tbody></table>`
++  }
++  _generalRows(data) {
++    const rows = [
++      { name: t('Request URL'), value: data.url },
++      { name: t('Request Method'), value: data.method },
++    ]
++    let statusVal
++    let cls = 'st-ok'
++    if (data.status === 'blocked') {
++      statusVal = t('blocked (403)')
++      cls = 'st-err'
++    } else if (data.status === 0 || data.status === 'pending') {
++      statusVal = String(data.status)
++      cls = data.status === 0 ? 'st-err' : 'st-warn'
++    } else {
++      statusVal = `${data.status}`
++      if (data.status < 200 || data.status >= 400) cls = 'st-err'
++      else if (data.status >= 300) cls = 'st-warn'
+     }
++    rows.push({ name: t('Status Code'), value: statusVal, cls })
++    return rows
++  }
++  _headersHtml(data) {
++    const generalRows = map(this._generalRows(data), (row) => {
++      return `<tr>
++        <td class="${c('key')}">${escape(row.name)}</td>
++        <td class="${row.cls ? c(row.cls) : ''}">${escape(row.value)}</td>
++      </tr>`
++    }).join('')
++    const general = `<table class="${c('headers')}"><tbody>${generalRows}</tbody></table>`
+ 
+-    let postData = ''
+-    if (data.data) {
+-      postData = `<pre class="${c('data')}">${escape(data.data)}</pre>`
++    const resHeaders = toHeadersArray(data.resHeaders)
++    const reqHeaders = toHeadersArray(data.reqHeaders)
++    const queryParams = parseQueryParams(data.url)
++
++    let html = this._section(t('general'), general)
++    html += this._section(
++      t('responseHeaders'),
++      this._kvTable(resHeaders, t('Header'), t('Value'))
++    )
++    html += this._section(
++      t('requestHeaders'),
++      this._kvTable(reqHeaders, t('Header'), t('Value'))
++    )
++    if (queryParams.length > 0) {
++      html += this._section(
++        t('queryParams'),
++        this._kvTable(queryParams)
++      )
++    }
++    if (data.blocked || data.status === 'blocked') {
++      html += `<div class="${c('hint')} ${c('st-err')}">${t('blockedHint')}</div>`
++    } else if (data.mock) {
++      html += `<div class="${c('hint')} ${c('st-mock')}">${t('mockHint')}</div>`
+     }
+ 
+-    let reqHeaders = '<tr><td>Empty</td></tr>'
+-    if (data.reqHeaders) {
+-      reqHeaders = map(data.reqHeaders, (val, key) => {
+-        return `<tr>
+-          <td class="${c('key')}">${escape(key)}</td>
+-          <td>${escape(val)}</td>
+-        </tr>`
+-      }).join('')
++    return html
++  }
++  _cookiesHtml() {
++    const cookies = getCookieList()
++    return this._section(t('cookies'), this._kvTable(cookies))
++  }
++  _requestHtml(data) {
++    if (isEmpty(data.data)) {
++      return `<div class="${c('hint')}">${t('emptyBody')}</div>`
+     }
+ 
+-    let resHeaders = '<tr><td>Empty</td></tr>'
+-    if (data.resHeaders) {
+-      resHeaders = map(data.resHeaders, (val, key) => {
+-        return `<tr>
+-          <td class="${c('key')}">${escape(key)}</td>
+-          <td>${escape(val)}</td>
+-        </tr>`
+-      }).join('')
++    const reqHeaders = toHeadersArray(data.reqHeaders)
++    const contentType = getHeaderName(reqHeaders, 'content-type') || ''
++
++    let html = ''
++    if (contain(contentType, 'application/x-www-form-urlencoded')) {
++      const formData = parseBodyPairs(data.data)
++      html += this._section(t('formData'), this._kvTable(formData))
++    }
++    const pretty = prettyJson(data.data)
++    if (pretty !== data.data) {
++      html += this._section(
++        t('requestPayload') + ' (JSON)',
++        `<pre class="${c('code')}">${escape(pretty)}</pre>`
++      )
++    } else if (html === '') {
++      html += this._section(
++        t('requestPayload'),
++        `<pre class="${c('code')}">${escape(truncateStr(data.data))}</pre>`
++      )
+     }
+ 
+-    let resTxt = ''
+-    if (data.resTxt) {
+-      let text = data.resTxt
+-      if (text.length > MAX_RES_LEN) {
+-        text = truncate(text, MAX_RES_LEN)
+-      }
+-      resTxt = `<pre class="${c('response')}">${escape(text)}</pre>`
++    return html
++  }
++  _previewHtml(data) {
++    if (data.type === 'image' && !data.mock) {
++      return `<div class="${c('image-preview')}"><img src="${escape(
++        data.url
++      )}" alt="preview" /></div>`
++    }
++    if (!isEmpty(data.resTxt) && trim(data.resTxt) !== '') {
++      const tree = jsonTreeHtml(data.resTxt)
++      if (tree) return tree
++    }
++    return `<div class="${c('hint')}">${t('previewUnavailable')}</div>`
++  }
++  _initiatorHtml(data) {
++    if (!data.initiator) {
++      return `<div class="${c('hint')}">${t('noStack')}</div>`
+     }
++    return `<div class="${c('init-block')}">
++      <div class="${c('hint')}">${t('initiatorHint')}</div>
++      <div class="${c('init-file')}">${escape(initiatorLabel(data.initiator))}</div>
++      <div class="${c('init-url')}">${escape(
++        data.initiator.file + ':' + data.initiator.line + ':' + data.initiator.col
++      )}</div>
++    </div>`
++  }
++  _responseHtml(data) {
++    const resHeaders = toHeadersArray(data.resHeaders)
++    const contentType = getHeaderName(resHeaders, 'content-type') || ''
+ 
+-    const html = `<div class="${c('control')}">
+-      <span class="${c('icon-left back')}"></span>
+-      <span class="${c('icon-delete back')}"></span>
+-      <span class="${c('url')}">${escape(data.url)}</span>
+-      <span class="${c('icon-copy copy-res')}"></span>
+-    </div>
+-    <div class="${c('http')}">
+-      ${postData}
+-      <div class="${c('section')}">
+-        <h2>Response Headers</h2>
+-        <table class="${c('headers')}">
+-          <tbody>
+-            ${resHeaders}
+-          </tbody>
+-        </table>
+-      </div>
+-      <div class="${c('section')}">
+-        <h2>Request Headers</h2>
+-        <table class="${c('headers')}">
+-          <tbody>
+-            ${reqHeaders}
+-          </tbody>
+-        </table>
+-      </div>
+-      ${resTxt}
++    let statusHtml = ''
++    if (data.blocked || data.status === 'blocked') {
++      statusHtml = `<div class="${c('hint')} ${c('st-err')}">${t('blockedHint')}</div>`
++    } else if (data.mock) {
++      statusHtml = `<div class="${c('hint')} ${c('st-mock')}">${t('mockHint')}</div>`
++    }
++
++    if (data.type === 'image') {
++      return `${statusHtml}<div class="${c('image-preview')}"><img src="${escape(
++        data.url
++      )}" alt="response image" /></div>`
++    }
++
++    const resTxt = data.resTxt
++    if (isEmpty(resTxt) || trim(resTxt) === '') {
++      return `${statusHtml}<div class="${c('hint')}">${t('emptyRes')}</div>`
++    }
++
++    const pretty = prettyJson(resTxt)
++    const isJsonPretty = pretty !== resTxt
++    const title = isJsonPretty ? t('response') + ' (JSON)' : t('response')
++    const body = `<pre class="${c('code')}">${escape(
++      truncateStr(pretty)
++    )}</pre>`
++
++    return `${statusHtml}${this._section(
++      `${title}  |  ${contentType || t('unknown type')}`,
++      body
++    )}`
++  }
++  _timingHtml(data) {
++    const timing = getTimingSegments(data)
++    const total = timing.total || data.time || 0
++
++    let rows = ''
++    each(timing.segments, (seg) => {
++      const dur = Math.max(0, seg.to - seg.from)
++      const left = timing.total > 0 ? (seg.from / timing.total) * 100 : 0
++      const width =
++        timing.total > 0 ? ((seg.to - seg.from) / timing.total) * 100 : 0
++      rows += `<div class="${c('timing-row')}">
++        <span class="${c('t-label')}">${escape(t(seg.name))}</span>
++        <div class="${c('t-track')}"><div class="${c(
++        't-bar'
++      )} ${c(seg.cls)}" style="left:${left}%;width:${width}%"></div></div>
++        <span class="${c('t-val')}">${escape(formatMs(dur))}</span>
++      </div>`
++    })
++
++    rows += `<div class="${c('timing-row')} ${c('t-total')}">
++      <span class="${c('t-label')}">${t('Total')}</span>
++      <div class="${c('t-track')}"><div class="${c(
++      't-bar'
++    )} ${c('total')}" style="left:0;width:100%"></div></div>
++      <span class="${c('t-val')}">${escape(formatMs(total))}</span>
+     </div>`
+ 
+-    this._$container.html(html).show()
+-    this._detailData = data
++    const note = timing.precise
++      ? ''
++      : `<div class="${c('hint')}">${t('timingHint')}</div>`
++
++    return `<div class="${c('timing')}">${rows}</div>${note}`
+   }
+-  hide() {
+-    this._$container.hide()
+-    this.emit('hide')
++  _replay = async () => {
++    const data = this._request
++    if (!data) return
++
++    const headers = {}
++    const rh = data.reqHeaders
++    if (rh) {
++      if (typeof rh.forEach === 'function') {
++        rh.forEach((value, name) => (headers[name] = value))
++      } else {
++        each(rh, (value, name) => (headers[name] = value))
++      }
++    }
++    delete headers['content-length']
++
++    const init = { method: data.method, headers }
++    if (!contain(['GET', 'HEAD'], data.method) && data.data) {
++      init.body = data.data
++    }
++
++    try {
++      await fetch(data.url, init)
++      this._devtools.notify(t('replayed'), { icon: 'success' })
++    } catch (e) {
++      this._devtools.notify(t('replayFailed') + e.message, { icon: 'error' })
++    }
++  }
++  _copyCurl = () => {
++    const data = this._request
++    if (!data) return
++
++    copy(
++      curlStr({
++        requestMethod: data.method,
++        url() {
++          return data.url
++        },
++        requestFormData() {
++          return data.data
++        },
++        requestHeaders() {
++          const reqHeaders = toHeadersArray(data.reqHeaders)
++          reqHeaders.push({ name: 'User-Agent', value: navigator.userAgent })
++          reqHeaders.push({ name: 'Referer', value: location.href })
++
++          return reqHeaders
++        },
++      })
++    )
++
++    this._devtools.notify(t('Copied'), { icon: 'success' })
++  }
++  _copyFetch = () => {
++    const data = this._request
++    if (!data) return
++
++    copy(fetchStr(data))
++    this._devtools.notify(t('copied'), { icon: 'success' })
+   }
+   _copyRes = () => {
+-    const detailData = this._detailData
++    const data = this._request
++    if (!data) return
+ 
+-    let data = `${detailData.method} ${detailData.url} ${detailData.status}\n`
+-    if (!isEmpty(detailData.data)) {
+-      data += '\nRequest Data\n\n'
+-      data += `${detailData.data}\n`
++    let out = `${data.method} ${data.url} ${data.status}\n`
++    if (!isEmpty(data.data)) {
++      out += `\n${t('Request Data')}\n\n`
++      out += `${data.data}\n`
+     }
+-    if (!isEmpty(detailData.reqHeaders)) {
+-      data += '\nRequest Headers\n\n'
+-      each(detailData.reqHeaders, (val, key) => (data += `${key}: ${val}\n`))
++    const reqHeaders = toHeadersArray(data.reqHeaders)
++    const resHeaders = toHeadersArray(data.resHeaders)
++    if (!isEmpty(reqHeaders)) {
++      out += `\n${t('requestHeaders')}\n\n`
++      each(reqHeaders, (h) => (out += `${h.name}: ${h.value}\n`))
+     }
+-    if (!isEmpty(detailData.resHeaders)) {
+-      data += '\nResponse Headers\n\n'
+-      each(detailData.resHeaders, (val, key) => (data += `${key}: ${val}\n`))
++    if (!isEmpty(resHeaders)) {
++      out += `\n${t('responseHeaders')}\n\n`
++      each(resHeaders, (h) => (out += `${h.name}: ${h.value}\n`))
+     }
+-    if (detailData.resTxt) {
+-      data += `\n${detailData.resTxt}\n`
++    if (data.resTxt) {
++      out += `\n${data.resTxt}\n`
+     }
+ 
+-    copy(data)
+-    this._devtools.notify('Copied', { icon: 'success' })
++    copy(out)
++    this._devtools.notify(t('Copied'), { icon: 'success' })
+   }
+   _bindEvent() {
+     const devtools = this._devtools
++    const self = this
+ 
+     this._$container
+       .on('click', c('.back'), () => this.hide())
+       .on('click', c('.copy-res'), this._copyRes)
+-      .on('click', c('.http .response'), () => {
+-        const data = this._detailData
++      .on('click', c('.copy-curl'), this._copyCurl)
++      .on('click', c('.copy-fetch'), this._copyFetch)
++      .on('click', c('.replay'), this._replay)
++      .on('click', c('.tab'), function () {
++        const tab = $(this).data('tab')
++        if (!tab) return
++        self._activeTab = tab
++        self._renderTab()
++      })
++      .on('click', c('.sec-title'), function () {
++        $(this)
++          .parent(c('.section'))
++          .toggleClass(c('collapsed'))
++      })
++      .on('click', c('.code'), () => {
++        const data = this._request
+         const resTxt = data.resTxt
+-
+-        if (isJson(resTxt)) {
+-          return showSources('object', resTxt)
+-        }
+-
+-        switch (data.subType) {
+-          case 'css':
+-            return showSources('css', resTxt)
+-          case 'html':
+-            return showSources('html', resTxt)
+-          case 'javascript':
+-            return showSources('js', resTxt)
+-          case 'json':
++        if (this._activeTab === 'response' && resTxt) {
++          if (isJsonStr(resTxt)) {
+             return showSources('object', resTxt)
++          }
++          switch (data.subType) {
++            case 'css':
++              return showSources('css', resTxt)
++            case 'html':
++              return showSources('html', resTxt)
++            case 'javascript':
++              return showSources('js', resTxt)
++            case 'json':
++              return showSources('object', resTxt)
++          }
+         }
+-        switch (data.type) {
+-          case 'image':
+-            return showSources('img', data.url)
++        if (this._activeTab === 'request' && data.data && isJsonStr(data.data)) {
++          return showSources('object', data.data)
+         }
+       })
+ 
+@@ -163,4 +476,43 @@ export default class Detail extends Emitter {
+   }
+ }
+ 
+-const MAX_RES_LEN = 100000
++function getHeaderName(headers, name) {
++  const header = headers.find(
++    (h) => h.name.toLowerCase() === name.toLowerCase()
++  )
++  return header ? header.value : ''
++}
++
++function parseBodyPairs(text) {
++  const ret = []
++  each(text.split('&'), (pair) => {
++    if (pair === '') return
++    const idx = pair.indexOf('=')
++    const name = idx === -1 ? pair : pair.slice(0, idx)
++    const value = idx === -1 ? '' : pair.slice(idx + 1)
++    let dName = name
++    let dValue = value
++    try {
++      dName = decodeURIComponent(name.replace(/\+/g, ' '))
++      dValue = decodeURIComponent(value.replace(/\+/g, ' '))
++    } catch {
++      // Keep raw values.
++    }
++    ret.push({ name: dName, value: dValue })
++  })
++  return ret
++}
++
++function truncateStr(text) {
++  if (text.length > MAX_RES_LEN) return truncate(text, MAX_RES_LEN)
++  return text
++}
++
++function isJsonStr(str) {
++  try {
++    JSON.parse(str)
++    return true
++  } catch {
++    return false
++  }
++}
+diff --git a/src/Network/Network.js b/src/Network/Network.js
+old mode 100644
+new mode 100755
+index eb8988f..84d5500
+--- a/src/Network/Network.js
++++ b/src/Network/Network.js
+@@ -5,20 +5,40 @@ import each from 'licia/each'
+ import map from 'licia/map'
+ import Detail from './Detail'
+ import throttle from 'licia/throttle'
+-import { getFileName, classPrefix as c } from '../lib/util'
++import { getFileName, classPrefix as c, savePreservedLogs, loadPreservedLogs } from '../lib/util'
+ import evalCss from '../lib/evalCss'
+ import chobitsu from '../lib/chobitsu'
+ import emitter from '../lib/emitter'
+ import LunaDataGrid from 'luna-data-grid'
+ import ResizeSensor from 'licia/ResizeSensor'
+ import MediaQuery from 'licia/MediaQuery'
+-import { getType } from './util'
+ import copy from 'licia/copy'
+ import extend from 'licia/extend'
+-import trim from 'licia/trim'
+-import isNull from 'licia/isNull'
+-import LunaModal from 'luna-modal'
+-import { curlStr } from './util'
++import {
++  curlStr,
++  fetchStr,
++  getType,
++  buildHar,
++  harToRecords,
++  compileBlockPatterns,
++  compilePattern,
++  compileFilter,
++  isFailed,
++  classifyChip,
++  parseInitiator,
++  initiatorLabel,
++  absoluteUrl,
++  formatBytes,
++  formatMs,
++  THROTTLE_PROFILES,
++  setLang,
++  getLang,
++  t,
++} from './util'
++
++const SETTINGS_KEY = 'eruda_network_settings'
++
++const CHIPS = ['all', 'xhr', 'js', 'css', 'img', 'media', 'font', 'doc', 'other']
+ 
+ export default class Network extends Tool {
+   constructor() {
+@@ -30,6 +50,32 @@ export default class Network extends Tool {
+     this._requests = {}
+     this._selectedRequest = null
+     this._isRecording = true
++
++    // Filters
++    this._chip = 'all'
++    this._filterText = ''
++    this._filterFn = null
++    this._failedFilterOn = false
++
++    // Rules (block / rewrite / mock)
++    this._blockEnabled = false
++    this._blockMatchers = []
++    this._rewriteRules = []
++    this._mockRules = []
++    this._panelTab = 'blocked'
++    this._interceptorInstalled = false
++    this._blockedId = 0
++
++    // Preserve Log (restore requests after page reload)
++    this._preserveLog = false
++
++    // Throttling
++    this._throttleKey = 'none'
++
++    // Initiator matching queue (url+method -> initiator)
++    this._initiatorQueue = []
++
++    this._loadSettings()
+   }
+   init($el, container) {
+     super.init($el)
+@@ -40,55 +86,30 @@ export default class Network extends Tool {
+     this._splitMediaQuery = new MediaQuery('screen and (min-width: 680px)')
+     this._splitMode = this._splitMediaQuery.isMatch()
+     this._requestDataGrid = new LunaDataGrid(this._$requests.get(0), {
+-      columns: [
+-        {
+-          id: 'name',
+-          title: 'Name',
+-          sortable: true,
+-          weight: 30,
+-        },
+-        {
+-          id: 'method',
+-          title: 'Method',
+-          sortable: true,
+-          weight: 14,
+-        },
+-        {
+-          id: 'status',
+-          title: 'Status',
+-          sortable: true,
+-          weight: 14,
+-        },
+-        {
+-          id: 'type',
+-          title: 'Type',
+-          sortable: true,
+-          weight: 14,
+-        },
+-        {
+-          id: 'size',
+-          title: 'Size',
+-          sortable: true,
+-          weight: 14,
+-        },
+-        {
+-          id: 'time',
+-          title: 'Time',
+-          sortable: true,
+-          weight: 14,
+-        },
+-      ],
++      columns: this._gridColumns(),
+     })
++    emitter.on(emitter.I18N, this._onI18n)
+     this._resizeSensor = new ResizeSensor($el.get(0))
++    this._installIntercept()
+     this._bindEvent()
++    this._updateStats()
++    this._renderChips()
++
++    if (this._preserveLog) {
++      window.addEventListener('pagehide', this._saveNetworkPreserved)
++      this._restorePreservedNetwork()
++    }
+   }
+   show() {
+     super.show()
+     this._updateDataGridHeight()
++    this._drawOverview()
+   }
+   clear() {
+     this._requests = {}
+     this._requestDataGrid.clear()
++    this._updateStats()
++    this._drawOverview()
+   }
+   requests() {
+     const ret = []
+@@ -100,17 +121,535 @@ export default class Network extends Tool {
+   _updateDataGridHeight() {
+     this._requestDataGrid.fit()
+   }
++  _gridColumns() {
++    return [
++      { id: 'name', title: t('Name'), sortable: true, weight: 30 },
++      { id: 'method', title: t('Method'), sortable: true, weight: 10 },
++      { id: 'status', title: t('Status'), sortable: true, weight: 10 },
++      { id: 'type', title: t('Type'), sortable: true, weight: 10 },
++      { id: 'initiator', title: t('Initiator'), sortable: true, weight: 16 },
++      { id: 'size', title: t('Size'), sortable: true, weight: 10 },
++      { id: 'time', title: t('Time'), sortable: true, weight: 14 },
++    ]
++  }
++  _onI18n = () => {
++    this._applyI18n()
++    if (this._requestDataGrid) {
++      const grid = this._requestDataGrid
++      grid.setOption('columns', this._gridColumns())
++      if (grid.renderHeader) grid.renderHeader()
++    }
++    const $preserveLabel = this._$network.find(c('.preserve-toggle'))
++    if ($preserveLabel.length) {
++      $preserveLabel.attr('title', t('Preserve Log'))
++      $preserveLabel.find('span').text(t('Preserve Log'))
++    }
++  }
++  _loadSettings() {
++    try {
++      const data = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
++      if (data.block) {
++        if (typeof data.block.enabled === 'boolean') this._blockEnabled = data.block.enabled
++        if (typeof data.block.patterns === 'string') this._blockPatternsText = data.block.patterns
++      }
++      if (Array.isArray(data.rewrite)) this._rewriteRules = data.rewrite
++      if (Array.isArray(data.mock)) this._mockRules = data.mock
++      if (THROTTLE_PROFILES[data.throttle]) this._throttleKey = data.throttle
++      if (typeof data.preserveLog === 'boolean') this._preserveLog = data.preserveLog
++    } catch {
++      // Ignore corrupted storage.
++    }
++    if (typeof this._blockPatternsText !== 'string') {
++      this._blockPatternsText = ''
++    }
++    this._blockMatchers = compileBlockPatterns(this._blockPatternsText)
++  }
++  _saveSettings() {
++    try {
++      localStorage.setItem(
++        SETTINGS_KEY,
++        JSON.stringify({
++          block: { enabled: this._blockEnabled, patterns: this._blockPatternsText },
++          rewrite: this._rewriteRules,
++          mock: this._mockRules,
++          throttle: this._throttleKey,
++          preserveLog: this._preserveLog,
++        })
++      )
++    } catch {
++      // Storage unavailable, keep in memory only.
++    }
++  }
++
++  // ---------- preserve log ----------
++  _saveNetworkPreserved = () => {
++    if (!this._preserveLog) return
++    const ids = Object.keys(this._requests)
++    if (ids.length === 0) return
++    const cap = (s) =>
++      typeof s === 'string' && s.length > 50000 ? s.slice(0, 50000) : s
++    const records = []
++    each(ids.slice(-100), (id) => {
++      const r = this._requests[id]
++      if (!r || r.fromSession) return
++      records.push({
++        id: r.id || id,
++        name: r.name,
++        url: r.url,
++        originalUrl: r.originalUrl,
++        method: r.method,
++        status: r.status,
++        displayStatus: r.displayStatus,
++        type: r.type,
++        subType: r.subType,
++        chipType: r.chipType,
++        size: r.size,
++        startTime: r.startTime,
++        time: r.time,
++        displayTime: r.displayTime,
++        done: r.done,
++        blocked: r.blocked,
++        mock: r.mock,
++        netError: r.netError,
++        hasErr: r.hasErr,
++        initiator: r.initiator,
++        data: cap(r.data),
++        resTxt: cap(r.resTxt),
++        reqHeaders: r.reqHeaders || {},
++        resHeaders: r.resHeaders || {},
++      })
++    })
++    if (records.length === 0) return
++    savePreservedLogs('network', { records })
++  }
++  _restorePreservedNetwork() {
++    const data = loadPreservedLogs('network')
++    if (!data || !Array.isArray(data.records) || data.records.length === 0) return
++
++    each(data.records.slice(-100), (record) => {
++      const id = record.id
++      const request = extend({ fromSession: true }, record)
++      request.render = () => {
++        const gridData = {
++          id,
++          name: request.name,
++          method: request.method,
++          status: request.displayStatus || request.status,
++          type: request.subType,
++          initiator: initiatorLabel(request.initiator),
++          size: request.size,
++          time: request.displayTime,
++        }
++        if (request._gridNode) {
++          request._gridNode.data = gridData
++          request._gridNode.render()
++        } else {
++          request._gridNode = this._requestDataGrid.append(gridData, { selectable: true })
++          $(request._gridNode.container).data('id', id)
++        }
++        this._updateRowClass(request._gridNode, request)
++      }
++      request.render()
++      this._requests[id] = request
++    })
++    this._updateStats()
++    this._drawOverview()
++  }
++
++  // ---------- rules ----------
++  _applyRewrite(url) {
++    let result = url
++    each(this._rewriteRules, (rule) => {
++      if (!rule.enabled || !rule.pattern) return
++      const matcher = compilePattern(rule.pattern)
++      if (matcher.test(result)) {
++        result = matcher.replace(result, String(rule.replacement || ''))
++      }
++    })
++    return result
++  }
++  _matchMock(url) {
++    let found = null
++    each(this._mockRules, (rule) => {
++      if (found || !rule.enabled || !rule.pattern) return
++      if (compilePattern(rule.pattern).test(url)) found = rule
++    })
++    return found
++  }
++  _isBlocked(url) {
++    if (!this._blockEnabled || this._blockMatchers.length === 0) {
++      return false
++    }
++    return this._blockMatchers.some((matcher) => matcher.test(url))
++  }
++  _throttleProfile() {
++    return THROTTLE_PROFILES[this._throttleKey] || null
++  }
++  _pushInitiator(entry) {
++    this._initiatorQueue.push(entry)
++    if (this._initiatorQueue.length > 200) {
++      this._initiatorQueue = this._initiatorQueue.slice(-100)
++    }
++  }
++  _takeInitiator(url, method) {
++    const queue = this._initiatorQueue
++    for (let i = queue.length - 1; i >= 0; i--) {
++      const entry = queue[i]
++      if (entry.url === url && entry.method === method) {
++        queue.splice(i, 1)
++        if (Date.now() - entry.ts < 30000) return entry.initiator
++        return null
++      }
++    }
++    return null
++  }
++
++  // ---------- unified intercept: rewrite -> mock -> block -> throttle ----------
++  _installIntercept() {
++    if (this._interceptorInstalled) {
++      return
++    }
++    this._interceptorInstalled = true
++
++    const self = this
++
++    // ---- XHR ----
++    const proto = window.XMLHttpRequest.prototype
++    const origOpen = proto.open
++    const origSend = proto.send
++    const origSetHeader = proto.setRequestHeader
++
++    proto.open = function (method, url) {
++      const urlStr = String(url)
++      const rewritten = self._applyRewrite(absoluteUrl(urlStr))
++      this.__erudaInfo = {
++        method: String(method).toUpperCase(),
++        original: absoluteUrl(urlStr),
++        url: rewritten,
++        headers: {},
++        initiator: parseInitiator(),
++        mock: self._matchMock(rewritten),
++        blocked: self._isBlocked(rewritten),
++      }
++      return origOpen.call(this, method, rewritten)
++    }
++    proto.setRequestHeader = function (key, value) {
++      if (this.__erudaInfo && key && value) this.__erudaInfo.headers[key] = value
++      return origSetHeader.apply(this, arguments)
++    }
++    proto.send = function (data) {
++      const info = this.__erudaInfo
++      if (!info) return origSend.apply(this, arguments)
++
++      const body = typeof data === 'string' ? data : ''
++
++      if (info.blocked) {
++        self._recordSynthetic('xhr', info, body, {
++          status: 403,
++          displayStatus: 'blocked',
++          resTxt: '',
++          blocked: true,
++        })
++        self._simulateXhr(this, {
++          status: 403,
++          statusText: t('Blocked by eruda'),
++          body: '',
++          contentType: '',
++        })
++        return
++      }
++      if (info.mock) {
++        const rule = info.mock
++        const mockBody = String(rule.body == null ? '' : rule.body)
++        const status = Number(rule.status) || 200
++        const contentType = rule.contentType || 'application/json'
++        self._recordSynthetic('xhr', info, body, {
++          status,
++          displayStatus: status + ' *',
++          resTxt: mockBody,
++          resHeaders: { 'content-type': contentType },
++          mock: true,
++        })
++        const xhr = this
++        setTimeout(() => {
++          self._simulateXhr(xhr, { status, statusText: 'OK', body: mockBody, contentType })
++        }, 0)
++        return
++      }
++
++      const profile = self._throttleProfile()
++      if (profile && profile.offline) {
++        self._recordSynthetic('xhr', info, body, {
++          status: 0,
++          displayStatus: '0',
++          resTxt: '',
++          netError: true,
++        })
++        self._simulateXhr(this, { networkError: true })
++        return
++      }
++
++      self._pushInitiator({
++        url: info.url,
++        method: info.method,
++        ts: Date.now(),
++        initiator: info.initiator,
++      })
++
++      if (profile && profile.latency) {
++        const args = arguments
++        const xhr = this
++        setTimeout(() => {
++          origSend.apply(xhr, args)
++        }, profile.latency)
++        return
++      }
++      return origSend.apply(this, arguments)
++    }
++
++    // ---- fetch ----
++    const origFetch = window.fetch
++    if (origFetch) {
++      window.fetch = function (input, init) {
++        const outerArgs = arguments
++        const rawUrl = typeof input === 'string' ? input : input && input.url ? input.url : ''
++        const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
++        const headers = (init && init.headers) || (input && input.headers) || {}
++        const body = init && typeof init.body === 'string' ? init.body : ''
++        const urlStr = String(rawUrl)
++        const rewritten = self._applyRewrite(absoluteUrl(urlStr))
++        const mockRule = self._matchMock(rewritten)
++        const blocked = self._isBlocked(rewritten)
++        const profile = self._throttleProfile()
++
++        const recordFetch = (displayStatus, opts) => {
++          self._recordSynthetic(
++            'fetch',
++            {
++              method,
++              original: absoluteUrl(urlStr),
++              url: rewritten,
++              headers,
++              initiator: parseInitiator(),
++            },
++            body,
++            opts
++          )
++        }
++
++        if (blocked) {
++          recordFetch('blocked', {
++            status: 403,
++            displayStatus: 'blocked',
++            resTxt: '',
++            blocked: true,
++          })
++          return Promise.resolve(
++          new Response('', { status: 403, statusText: t('Blocked by eruda') })
++        )
++        }
++        if (mockRule) {
++          const mockBody = String(mockRule.body == null ? '' : mockRule.body)
++          const status = Number(mockRule.status) || 200
++          const resHeaders = { 'content-type': mockRule.contentType || 'application/json' }
++          recordFetch(status + ' *', {
++            status,
++            displayStatus: status + ' *',
++            resTxt: mockBody,
++            resHeaders,
++            mock: true,
++          })
++          return new Promise((resolve) => {
++            setTimeout(() => {
++              try {
++                resolve(new Response(mockBody, { status, headers: resHeaders }))
++              } catch {
++                resolve(new Response(mockBody, { status }))
++              }
++            }, 0)
++          })
++        }
++        if (profile && profile.offline) {
++          recordFetch('0', { status: 0, displayStatus: '0', resTxt: '', netError: true })
++          return Promise.reject(new TypeError('Failed to fetch'))
++        }
++
++        self._pushInitiator({
++          url: rewritten,
++          method,
++          ts: Date.now(),
++          initiator: parseInitiator(),
++        })
++
++        const run = () => {
++          let fetchArgs = outerArgs
++          if (rewritten !== urlStr) {
++            if (typeof input === 'string') {
++              fetchArgs = [rewritten, init]
++            } else {
++              try {
++                fetchArgs = [new Request(rewritten, input), init]
++              } catch {
++                fetchArgs = outerArgs
++              }
++            }
++          }
++          return origFetch.apply(this, fetchArgs).then(
++            (res) => {
++              let extra = 0
++              if (profile && profile.bps) {
++                const len = +(res.headers.get('content-length') || 0)
++                extra = len > 0 ? Math.min(8000, (len / profile.bps) * 1000) : profile.latency
++              }
++              if (extra > 0) {
++                return new Promise((resolve) => setTimeout(() => resolve(res), extra))
++              }
++              return res
++            },
++            (err) => {
++              throw err
++            }
++          )
++        }
++
++        if (profile && profile.latency) {
++          return new Promise((resolve) => setTimeout(resolve, profile.latency)).then(run)
++        }
++        return run()
++      }
++    }
++  }
++  _simulateXhr(xhr, opts) {
++    const define = (name, value) => {
++      try {
++        Object.defineProperty(xhr, name, {
++          value,
++          configurable: true,
++        })
++      } catch {
++        // Ignore.
++      }
++    }
++    if (opts.networkError) {
++      define('readyState', 4)
++      define('status', 0)
++      define('statusText', '')
++      define('response', '')
++      if (xhr.responseType === '' || xhr.responseType === 'text') {
++        define('responseText', '')
++      }
++      setTimeout(() => {
++        try {
++          xhr.dispatchEvent(new Event('readystatechange'))
++          const ProgressEventCtor = window.ProgressEvent || Event
++          xhr.dispatchEvent(new ProgressEventCtor('error'))
++          xhr.dispatchEvent(new ProgressEventCtor('loadend'))
++        } catch {
++          // Ignore.
++        }
++      }, 0)
++      return
++    }
++    define('readyState', 4)
++    define('status', opts.status)
++    define('statusText', opts.statusText || 'OK')
++    define('response', opts.body)
++    if (xhr.responseType === '' || xhr.responseType === 'text') {
++      define('responseText', opts.body)
++    }
++    define('getAllResponseHeaders', () =>
++      opts.contentType ? 'content-type: ' + opts.contentType + '\r\n' : ''
++    )
++    define('getResponseHeader', (name) => {
++      if (name && String(name).toLowerCase() === 'content-type') return opts.contentType || null
++      return null
++    })
++
++    setTimeout(() => {
++      try {
++        xhr.dispatchEvent(new Event('readystatechange'))
++        const ProgressEventCtor = window.ProgressEvent || Event
++        xhr.dispatchEvent(new ProgressEventCtor('load'))
++        xhr.dispatchEvent(new ProgressEventCtor('loadend'))
++      } catch {
++        // Ignore.
++      }
++    }, 0)
++  }
++  _recordSynthetic(kind, info, body, opts) {
++    if (!this._isRecording) {
++      return
++    }
++
++    const id = 'synthetic-' + this._blockedId++
++    const startTime = Date.now()
++    const resHeaders = opts.resHeaders || {}
++    const contentType = resHeaders['content-type'] || ''
++    const tt = getType(contentType)
++    const request = {
++      name: getFileName(info.url),
++      url: info.url,
++      originalUrl: info.original && info.original !== info.url ? info.original : null,
++      status: opts.status,
++      displayStatus: opts.displayStatus,
++      type: opts.mock || opts.blocked ? tt.type : kind,
++      subType: opts.mock || opts.blocked ? tt.subType : kind,
++      chipType: 'xhr',
++      size: (opts.resTxt || '').length,
++      data: typeof body === 'string' ? body : '',
++      method: info.method,
++      startTime,
++      time: 0,
++      displayTime: '0 ms',
++      resTxt: opts.resTxt || '',
++      done: true,
++      blocked: opts.blocked,
++      mock: opts.mock,
++      netError: opts.netError,
++      initiator: info.initiator || null,
++      reqHeaders: info.headers || {},
++      resHeaders,
++    }
++    request.render = () => {
++      const data = {
++        id,
++        name: request.name,
++        method: request.method,
++        status: request.displayStatus || request.status,
++        type: request.subType,
++        initiator: initiatorLabel(request.initiator),
++        size: request.size,
++        time: request.displayTime,
++      }
++      if (request._gridNode) {
++        request._gridNode.data = data
++        request._gridNode.render()
++      } else {
++        request._gridNode = this._requestDataGrid.append(data, { selectable: true })
++        $(request._gridNode.container).data('id', id)
++      }
++      this._updateRowClass(request._gridNode, request)
++    }
++    request.render()
++    this._requests[id] = request
++    this._updateStats()
++    this._drawOverview()
++  }
++
++  // ---------- chobitsu events ----------
+   _reqWillBeSent = (params) => {
+     if (!this._isRecording) {
+       return
+     }
+ 
++    const initiator = this._takeInitiator(params.request.url, params.request.method)
+     const request = {
+       name: getFileName(params.request.url),
+       url: params.request.url,
+       status: 'pending',
+       type: 'unknown',
+       subType: 'unknown',
++      chipType: initiator ? 'xhr' : null,
+       size: 0,
+       data: params.request.postData,
+       method: params.request.method,
+@@ -118,32 +657,62 @@ export default class Network extends Tool {
+       time: 0,
+       resTxt: '',
+       done: false,
++      initiator,
+       reqHeaders: params.request.headers || {},
+       resHeaders: {},
+     }
+-    let node
+     request.render = () => {
+       const data = {
++        id: params.requestId,
+         name: request.name,
+         method: request.method,
+         status: request.status,
+         type: request.subType,
++        initiator: initiatorLabel(request.initiator),
+         size: request.size,
+         time: request.displayTime,
+       }
+-      if (node) {
+-        node.data = data
+-        node.render()
++      if (request._gridNode) {
++        request._gridNode.data = data
++        request._gridNode.render()
+       } else {
+-        node = this._requestDataGrid.append(data, { selectable: true })
+-        $(node.container).data('id', params.requestId)
+-      }
+-      if (request.hasErr) {
+-        $(node.container).addClass(c('request-error'))
++        request._gridNode = this._requestDataGrid.append(data, { selectable: true })
++        $(request._gridNode.container).data('id', params.requestId)
+       }
++      this._updateRowClass(request._gridNode, request)
+     }
+     request.render()
+     this._requests[params.requestId] = request
++    this._updateStats()
++    this._drawOverview()
++  }
++  _updateRowClass(node, request) {
++    const $node = $(node.container)
++    $node.rmClass(c('request-error'))
++    $node.rmClass(c('request-warn'))
++    $node.rmClass(c('request-blocked'))
++    $node.rmClass(c('request-mock'))
++    $node.rmClass(c('request-restored'))
++    if (request.fromSession) {
++      $node.addClass(c('request-restored'))
++    }
++    if (request.blocked) {
++      $node.addClass(c('request-blocked'))
++    } else if (request.mock) {
++      $node.addClass(c('request-mock'))
++    } else if (request.status === 0) {
++      $node.addClass(c('request-error'))
++    } else if (typeof request.status === 'number' && request.status >= 400) {
++      $node.addClass(c('request-error'))
++    } else if (
++      typeof request.status === 'number' &&
++      request.status >= 300 &&
++      request.status < 400
++    ) {
++      $node.addClass(c('request-warn'))
++    } else if (request.hasErr) {
++      $node.addClass(c('request-error'))
++    }
+   }
+   _resReceivedExtraInfo = (params) => {
+     const request = this._requests[params.requestId]
+@@ -161,6 +730,7 @@ export default class Network extends Tool {
+     const { type, subType } = getType(contentType)
+     request.type = type
+     request.subType = subType
++    request.chipType = classifyChip(request)
+   }
+   _resReceived = (params) => {
+     const request = this._requests[params.requestId]
+@@ -198,6 +768,8 @@ export default class Network extends Tool {
+     }).body
+ 
+     request.render()
++    this._updateStats()
++    this._drawOverview()
+   }
+   _loadingFailed = (params) => {
+     const request = this._requests[params.requestId]
+@@ -214,6 +786,8 @@ export default class Network extends Tool {
+     request.done = true
+ 
+     request.render()
++    this._updateStats()
++    this._drawOverview()
+   }
+   _copyCurl = () => {
+     const request = this._selectedRequest
+@@ -229,6 +803,13 @@ export default class Network extends Tool {
+         },
+         requestHeaders() {
+           const reqHeaders = request.reqHeaders || {}
++          if (typeof reqHeaders.forEach === 'function') {
++            const ret = []
++            reqHeaders.forEach((value, name) => ret.push({ name, value }))
++            ret.push({ name: 'User-Agent', value: navigator.userAgent })
++            ret.push({ name: 'Referer', value: location.href })
++            return ret
++          }
+           extend(reqHeaders, {
+             'User-Agent': navigator.userAgent,
+             Referer: location.href,
+@@ -244,20 +825,30 @@ export default class Network extends Tool {
+       })
+     )
+ 
+-    this._container.notify('Copied', { icon: 'success' })
++    this._container.notify(t('copied'), { icon: 'success' })
++  }
++  _copyFetch = () => {
++    const request = this._selectedRequest
++
++    copy(fetchStr(request))
++
++    this._container.notify(t('copied'), { icon: 'success' })
+   }
+   _updateButtons() {
+     const $control = this._$control
+     const $showDetail = $control.find(c('.show-detail'))
+     const $copyCurl = $control.find(c('.copy-curl'))
++    const $copyFetch = $control.find(c('.copy-fetch'))
+     const iconDisabled = c('icon-disabled')
+ 
+     $showDetail.addClass(iconDisabled)
+     $copyCurl.addClass(iconDisabled)
++    $copyFetch.addClass(iconDisabled)
+ 
+     if (this._selectedRequest) {
+       $showDetail.rmClass(iconDisabled)
+       $copyCurl.rmClass(iconDisabled)
++      $copyFetch.rmClass(iconDisabled)
+     }
+   }
+   _toggleRecording = () => {
+@@ -272,27 +863,455 @@ export default class Network extends Tool {
+       this._detail.show(this._selectedRequest)
+     }
+   }
++  _updateStats = () => {
++    if (!this._$statTotal) {
++      return
++    }
++
++    let count = 0
++    let size = 0
++    let failed = 0
++    let first = Infinity
++    let last = 0
++    each(this._requests, (request) => {
++      count++
++      size += request.size || 0
++      if (isFailed(request)) {
++        failed++
++      }
++      if (request.startTime && request.startTime < first) {
++        first = request.startTime
++      }
++      if (request.done && request.time > 0) {
++        const end = request.startTime + request.time
++        if (end > last) last = end
++      }
++    })
++    const finish = count > 0 && last > first ? last - first : 0
++
++    this._$statTotal.text(`${count} ${t('requests')}`)
++    this._$statSize.text(`${formatBytes(size)} ${t('transferred')}`)
++    this._$statTime.text(`${t('finish')}: ${formatMs(finish)}`)
++    this._$statFailed.text(`${failed} ${t('failed')}`)
++    this._$statFailed.toggleClass(c('stat-zero'), failed === 0)
++  }
++
++  // ---------- filters ----------
++  _matchFilters(request) {
++    if (this._failedFilterOn && !isFailed(request)) return false
++    if (this._chip !== 'all' && classifyChip(request) !== this._chip) return false
++    if (this._filterFn && !this._filterFn(request)) return false
++    return true
++  }
++  _applyGridFilter() {
++    const grid = this._requestDataGrid
++    const self = this
++    const noFilter =
++      !this._failedFilterOn && this._chip === 'all' && !this._filterFn
++    // Rebuild rows first, then set the filter: luna-data-grid applies the
++    // filter option by re-rendering existing nodes, but rows removed by a
++    // previous filter are not restored when the filter is cleared.
++    grid.clear()
++    each(this._requests, (request) => {
++      request._gridNode = null
++      request.render()
++    })
++    if (noFilter) {
++      grid.setOption('filter', '')
++    } else {
++      grid.setOption('filter', (node) => {
++        const request = node.data && self._requests[node.data.id]
++        if (!request) return true
++        return self._matchFilters(request)
++      })
++    }
++  }
++  _renderChips() {
++    if (!this._$chips) return
++    const self = this
++    let html = ''
++    each(CHIPS, (chip) => {
++      html += `<span class="${c('chip')}${self._chip === chip ? ' ' + c('chip-on') : ''}" data-chip="${chip}">${t(chip)}</span>`
++    })
++    this._$chips.html(html)
++  }
++  _toggleFailedFilter = () => {
++    if (this._failedFilterOn) {
++      this._failedFilterOn = false
++      this._$filterText.text('')
++      this._$statFailed.rmClass(c('active'))
++    } else {
++      this._failedFilterOn = true
++      this._$filterText.text(t('(failed)'))
++      this._$statFailed.addClass(c('active'))
++    }
++    this._applyGridFilter()
++  }
++  _onSearchInput = () => {
++    this._filterText = this._$search.val() || ''
++    this._filterFn = compileFilter(this._filterText)
++    this._applyGridFilter()
++  }
++  _exportHar = () => {
++    const har = buildHar(this._requests)
++    const blob = new Blob([JSON.stringify(har, null, 2)], {
++      type: 'application/json',
++    })
++    const url = URL.createObjectURL(blob)
++    const a = document.createElement('a')
++    a.href = url
++    a.download = 'eruda-' + Date.now() + '.har'
++    document.body.appendChild(a)
++    a.click()
++    document.body.removeChild(a)
++    setTimeout(() => URL.revokeObjectURL(url), 1000)
++
++    this._container.notify(t('harExported'), { icon: 'success' })
++  }
++  _importHar = (file) => {
++    if (!file) return
++    const self = this
++    const reader = new FileReader()
++    reader.onload = function () {
++      try {
++        const records = harToRecords(JSON.parse(String(reader.result)))
++        if (!records) throw new Error('bad har')
++        each(records, (record) => {
++          const id = record.id
++          record.render = () => {
++            const data = {
++              id,
++              name: record.name,
++              method: record.method,
++              status: record.status,
++              type: record.subType,
++              initiator: initiatorLabel(record.initiator),
++              size: record.size,
++              time: record.displayTime,
++            }
++            if (record._gridNode) {
++              record._gridNode.data = data
++              record._gridNode.render()
++            } else {
++              record._gridNode = self._requestDataGrid.append(data, { selectable: true })
++              $(record._gridNode.container).data('id', id)
++            }
++            self._updateRowClass(record._gridNode, record)
++          }
++          record.render()
++          self._requests[id] = record
++        })
++        self._updateStats()
++        self._drawOverview()
++        self._container.notify(`${t('harImported')} (${records.length})`, { icon: 'success' })
++      } catch {
++        self._container.notify(t('harImportFailed'), { icon: 'error' })
++      }
++    }
++    reader.readAsText(file)
++  }
++
++  // ---------- overview ----------
++  _drawOverview = () => {
++    const canvas = this._$overview
++    if (!canvas || this._overviewHidden) return
++    const el = canvas.get(0)
++    const w = el.clientWidth
++    const h = el.clientHeight
++    if (!w || !h) return
++    const dpr = window.devicePixelRatio || 1
++    if (el.width !== Math.round(w * dpr)) {
++      el.width = Math.round(w * dpr)
++      el.height = Math.round(h * dpr)
++    }
++    const ctx = el.getContext('2d')
++    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
++    ctx.clearRect(0, 0, w, h)
++
++    const rows = []
++    each(this._requests, (request) => rows.push(request))
++    if (rows.length === 0) return
++    let t0 = rows[0].startTime
++    let t1 = rows[0].startTime
++    each(rows, (r) => {
++      if (r.startTime < t0) t0 = r.startTime
++      const end = r.startTime + (r.time || 0)
++      if (end > t1) t1 = end
++    })
++    const span = Math.max(t1 - t0, 1)
++    const bands = 9
++    const bandH = h / bands
++    ctx.globalAlpha = 0.9
++    each(rows, (r, i) => {
++      const x = ((r.startTime - t0) / span) * w
++      const x2 = ((r.startTime + (r.time || 0) - t0) / span) * w
++      const wpx = Math.max(x2 - x, 2)
++      const y = (i % bands) * bandH + 1
++      let color = '#35a853'
++      if (r.blocked || r.status === 0 || (typeof r.status === 'number' && r.status >= 400))
++        color = '#d93025'
++      else if (r.mock) color = '#1a73e8'
++      else if (typeof r.status === 'number' && r.status >= 300) color = '#f5a623'
++      else if (r.status === 'pending') color = '#9aa0a6'
++      ctx.fillStyle = color
++      ctx.fillRect(x, y, wpx, Math.max(bandH - 2, 2))
++    })
++    ctx.globalAlpha = 1
++  }
++
++  // ---------- rules panel ----------
++  _toggleRulesPanel = () => {
++    const $panel = this._$rulesPanel
++    if ($panel.hasClass(c('show'))) {
++      $panel.rmClass(c('show'))
++    } else {
++      this._renderRulesPanel()
++      $panel.addClass(c('show'))
++    }
++  }
++  _renderRulesPanel() {
++    const tab = this._panelTab
++    const tabs = ['blocked', 'rewrite', 'mock']
++    let tabsHtml = ''
++    each(tabs, (id) => {
++      tabsHtml += `<span class="${c('pn-tab')}${id === tab ? ' ' + c('active') : ''}" data-ptab="${id}">${t(id)}</span>`
++    })
++
++    let body = ''
++    if (tab === 'blocked') {
++      body = `<label class="${c('pn-enable-row')}"><input type="checkbox" class="${c('bp-enable')}"> ${t('enableBlocking')}</label>
++        <textarea class="${c('bp-patterns')}" spellcheck="false"></textarea>
++        <div class="${c('pn-hint')}">${t('blockHint')}</div>
++        <div class="${c('pn-actions')}"><button class="${c('bp-save')}">${t('save')}</button></div>`
++    } else if (tab === 'rewrite') {
++      let rules = ''
++      each(this._rewriteRules, (rule, i) => {
++        rules += `<div class="${c('rule')}" data-rid="${i}">
++          <label class="${c('rule-en')}"><input type="checkbox" class="${c('rr-en')}"${rule.enabled ? ' checked' : ''}> ${t('enable')}</label>
++          <input class="${c('rr-pattern')}" placeholder="/api-old" value="${rule.pattern || ''}" spellcheck="false">
++          <span class="${c('rule-arrow')}">→</span>
++          <input class="${c('rr-replacement')}" placeholder="/api-new" value="${rule.replacement || ''}" spellcheck="false">
++          <span class="${c('rule-del')}">×</span>
++        </div>`
++      })
++      body = `<div class="${c('rules')}">${rules}</div>
++        <button class="${c('add')} ${c('add-rewrite')}">+ ${t('addRule')}</button>
++        <div class="${c('pn-hint')}">${t('rewriteHint')}</div>`
++    } else {
++      let rules = ''
++      each(this._mockRules, (rule, i) => {
++        rules += `<div class="${c('rule')} ${c('mock-rule')}" data-rid="${i}">
++          <div class="${c('rule-line')}">
++            <label class="${c('rule-en')}"><input type="checkbox" class="${c('mr-en')}"${rule.enabled ? ' checked' : ''}> ${t('enable')}</label>
++            <input class="${c('mr-pattern')}" placeholder="/api/user/123" value="${rule.pattern || ''}" spellcheck="false">
++            <input class="${c('mr-status')}" placeholder="200" value="${rule.status || ''}">
++            <input class="${c('mr-type')}" placeholder="application/json" value="${rule.contentType || ''}" spellcheck="false">
++            <span class="${c('rule-del')}">×</span>
++          </div>
++          <textarea class="${c('mr-body')}" placeholder='{"ok": true}' spellcheck="false">${rule.body || ''}</textarea>
++        </div>`
++      })
++      body = `<div class="${c('rules')}">${rules}</div>
++        <button class="${c('add')} ${c('add-mock')}">+ ${t('addRule')}</button>
++        <div class="${c('pn-hint')}">${t('mockHint2')}</div>`
++    }
++
++    this._$rulesPanel.html(
++      `<div class="${c('pn-header')}">${t('rules')}<span class="${c('pn-close')}">×</span></div>
++      <div class="${c('pn-tabs')}">${tabsHtml}</div>
++      <div class="${c('pn-body')}">${body}</div>`
++    )
++
++    if (tab === 'blocked') {
++      this._$rulesPanel.find(c('.bp-enable')).get(0).checked = this._blockEnabled
++      this._$rulesPanel.find(c('.bp-patterns')).val(this._blockPatternsText)
++    }
++  }
++  _syncRuleFields(rowEl, rid) {
++    const get = (sel) => {
++      const el = rowEl.querySelector(c(sel))
++      return el ? el.value : undefined
++    }
++    const checked = (sel) => {
++      const el = rowEl.querySelector(c(sel))
++      return el ? el.checked : undefined
++    }
++    if (this._panelTab === 'rewrite' && this._rewriteRules[rid]) {
++      const rule = this._rewriteRules[rid]
++      const en = checked('.rr-en')
++      if (typeof en === 'boolean') rule.enabled = en
++      const pattern = get('.rr-pattern')
++      if (pattern != null) rule.pattern = pattern
++      const replacement = get('.rr-replacement')
++      if (replacement != null) rule.replacement = replacement
++    } else if (this._panelTab === 'mock' && this._mockRules[rid]) {
++      const rule = this._mockRules[rid]
++      const en = checked('.mr-en')
++      if (typeof en === 'boolean') rule.enabled = en
++      const pattern = get('.mr-pattern')
++      if (pattern != null) rule.pattern = pattern
++      const status = get('.mr-status')
++      if (status != null) rule.status = status
++      const contentType = get('.mr-type')
++      if (contentType != null) rule.contentType = contentType
++      const body = get('.mr-body')
++      if (body != null) rule.body = body
++    }
++  }
++
++  // ---------- language ----------
++  _toggleLang = () => {
++    // Global setLang emits the I18N event, which triggers _onI18n.
++    setLang(getLang() === 'zh' ? 'en' : 'zh')
++  }
++  _applyI18n() {
++    if (!this._$control) return
++    this._$control.find(c('.record')).attr('title', this._isRecording ? t('record') : t('stop'))
++    this._$control.find(c('.clear-request')).attr('title', t('clear'))
++    this._$control.find(c('.har-export')).attr('title', t('exportHar'))
++    this._$control.find(c('.har-import')).attr('title', t('importHar'))
++    this._$control.find(c('.rules')).attr('title', t('rules'))
++    this._$control.find(c('.copy-fetch')).attr('title', t('copyFetch'))
++    this._$control.find(c('.show-detail')).attr('title', t('headers'))
++    this._$control.find(c('.copy-curl')).attr('title', t('copyCurl'))
++    this._$langBtn.text(t('lang'))
++    this._$search.attr('placeholder', t('searchPh'))
++    // Throttle select option labels.
++    const $sel = this._$control.find(c('.throttle'))
++    const throttleLabels = {
++      none: t('throttleOff'),
++      slow3g: t('Slow 3G'),
++      fast3g: t('Fast 3G'),
++      offline: t('offline'),
++    }
++    $sel.find('option').each(function () {
++      const $opt = $(this)
++      const label = throttleLabels[$opt.val()]
++      if (label) $opt.text(label)
++    })
++    this._renderChips()
++    this._updateStats()
++    if (this._$rulesPanel.hasClass(c('show'))) {
++      this._renderRulesPanel()
++    }
++  }
+   _bindEvent() {
+     const $control = this._$control
+-    const $filterText = this._$filterText
+     const requestDataGrid = this._requestDataGrid
+-
+     const self = this
+ 
+     $control
+       .on('click', c('.clear-request'), () => this.clear())
+       .on('click', c('.show-detail'), this._showDetail)
+       .on('click', c('.copy-curl'), this._copyCurl)
++      .on('click', c('.copy-fetch'), this._copyFetch)
+       .on('click', c('.record'), this._toggleRecording)
+-      .on('click', c('.filter'), () => {
+-        LunaModal.prompt('Filter').then((filter) => {
+-          if (isNull(filter)) return
++      .on('click', c('.har-export'), this._exportHar)
++      .on('click', c('.har-import'), () => this._$file.click())
++      .on('click', c('.rules'), this._toggleRulesPanel)
++      .on('click', c('.lang-btn'), this._toggleLang)
++      .on('change', c('.throttle'), function () {
++        self._throttleKey = $(this).val() || 'none'
++        self._saveSettings()
++      })
++
++    this._$file.on('change', function () {
++      const files = this.files || this.get(0).files
++      self._importHar(files && files[0])
++      this.value = ''
++    })
++
++    this._$chips.on('click', c('.chip'), function () {
++      const chip = $(this).data('chip')
++      if (!chip) return
++      self._chip = chip
++      self._renderChips()
++      self._applyGridFilter()
++    })
++
++    this._$search.on('input', this._onSearchInput)
++
++    const $preserve = this._$network.find(c('.preserve-log'))
++    $preserve.get(0).checked = this._preserveLog
++    $preserve.on('change', () => {
++      this._preserveLog = $preserve.get(0).checked
++      if (this._preserveLog) {
++        window.addEventListener('pagehide', this._saveNetworkPreserved)
++      } else {
++        window.removeEventListener('pagehide', this._saveNetworkPreserved)
++      }
++      this._saveSettings()
++    })
+ 
+-          $filterText.text(filter)
+-          requestDataGrid.setOption('filter', trim(filter))
++    this._$statTotal.on('click', () => {
++      if (this._failedFilterOn) this._toggleFailedFilter()
++      else {
++        this._failedFilterOn = false
++        this._$filterText.text('')
++        this._applyGridFilter()
++      }
++    })
++    this._$statFailed.on('click', this._toggleFailedFilter)
++
++    this._$rulesPanel
++      .on('click', c('.pn-close'), this._toggleRulesPanel)
++      .on('click', c('.pn-tab'), function () {
++        const ptab = $(this).data('ptab')
++        if (!ptab) return
++        self._panelTab = ptab
++        self._renderRulesPanel()
++      })
++      .on('click', c('.bp-save'), () => {
++        this._blockEnabled = this._$rulesPanel.find(c('.bp-enable')).get(0).checked
++        this._blockPatternsText = this._$rulesPanel.find(c('.bp-patterns')).val()
++        this._blockMatchers = compileBlockPatterns(this._blockPatternsText)
++        this._saveSettings()
++        this._$rulesPanel.rmClass(c('show'))
++        this._container.notify(
++          this._blockEnabled ? t('rulesApplied') : t('blockedSaved'),
++          { icon: 'success' }
++        )
++      })
++      .on('click', c('.add-rewrite'), () => {
++        this._rewriteRules.push({ enabled: true, pattern: '', replacement: '' })
++        this._saveSettings()
++        this._renderRulesPanel()
++      })
++      .on('click', c('.add-mock'), () => {
++        this._mockRules.push({
++          enabled: true,
++          pattern: '',
++          status: '200',
++          contentType: 'application/json',
++          body: '',
+         })
++        this._saveSettings()
++        this._renderRulesPanel()
++      })
++      .on('click', c('.rule-del'), function () {
++        const row = this.closest ? this.closest(c('.rule')) : null
++        if (!row) return
++        const rid = +row.getAttribute('data-rid')
++        self._syncRuleFields(row, rid)
++        if (self._panelTab === 'rewrite') self._rewriteRules.splice(rid, 1)
++        else self._mockRules.splice(rid, 1)
++        self._saveSettings()
++        self._renderRulesPanel()
+       })
+ 
++    this._$rulesPanel
++      .get(0)
++      .addEventListener(
++        'input',
++        (e) => {
++          const row = e.target.closest ? e.target.closest(c('.rule')) : null
++          if (!row) return
++          self._syncRuleFields(row, +row.getAttribute('data-rid'))
++          self._saveSettings()
++        },
++        true
++      )
++
+     requestDataGrid.on('select', (node) => {
+       const id = $(node.container).data('id')
+       const request = self._requests[id]
+@@ -310,7 +1329,10 @@ export default class Network extends Tool {
+     })
+ 
+     this._resizeSensor.addListener(
+-      throttle(() => this._updateDataGridHeight(), 15)
++      throttle(() => {
++        this._updateDataGridHeight()
++        this._drawOverview()
++      }, 15)
+     )
+ 
+     this._splitMediaQuery.on('match', () => {
+@@ -344,6 +1366,8 @@ export default class Network extends Tool {
+   destroy() {
+     super.destroy()
+ 
++    emitter.off(emitter.I18N, this._onI18n)
++    if (this._detail) this._detail.destroy()
+     this._resizeSensor.destroy()
+     evalCss.remove(this._style)
+     this._splitMediaQuery.removeAllListeners()
+@@ -353,6 +1377,7 @@ export default class Network extends Tool {
+     network.off('responseReceivedExtraInfo', this._resReceivedExtraInfo)
+     network.off('responseReceived', this._resReceived)
+     network.off('loadingFinished', this._loadingFinished)
++    network.off('loadingFailed', this._loadingFailed)
+ 
+     emitter.off(emitter.SCALE, this._updateScale)
+   }
+@@ -361,14 +1386,42 @@ export default class Network extends Tool {
+     $el.html(
+       c(`<div class="network">
+         <div class="control">
+-          <span class="icon-record record recording"></span>
+-          <span class="icon-clear clear-request"></span>
++          <span class="icon-record record recording" title="${t('record')}"></span>
++          <span class="icon-clear clear-request" title="${t('clear')}"></span>
++          <span class="icon-har har-export" title="${t('exportHar')}"></span>
++          <span class="icon-import har-import" title="${t('importHar')}"></span>
++          <span class="icon-rules rules" title="${t('rules')}"></span>
+           <span class="icon-eye icon-disabled show-detail"></span>
+-          <span class="icon-copy icon-disabled copy-curl"></span>
++          <span class="icon-copy icon-disabled copy-curl" title="${t('copyCurl')}"></span>
++          <span class="icon-fetch icon-disabled copy-fetch" title="${t('copyFetch')}">{ }</span>
++          <span class="spacer"></span>
++          <select class="throttle" title="${t('throttle')}">
++            <option value="none">${t('throttleOff')}</option>
++            <option value="slow3g">${t('Slow 3G')}</option>
++            <option value="fast3g">${t('Fast 3G')}</option>
++            <option value="offline">${t('offline')}</option>
++          </select>
++          <button class="lang-btn">${t('lang')}</button>
++        </div>
++        <div class="filter-bar">
++          <div class="chips"></div>
++          <label class="preserve-toggle" title="${t('Preserve Log')}">
++            <input type="checkbox" class="preserve-log">
++            <span>${t('Preserve Log')}</span>
++          </label>
++          <input class="search" placeholder="${t('searchPh')}" spellcheck="false">
++        </div>
++        <canvas class="overview" height="44"></canvas>
++        <div class="stats-bar">
++          <span class="stat stat-total"></span>
++          <span class="stat stat-size"></span>
++          <span class="stat stat-time"></span>
++          <span class="stat stat-failed"></span>
+           <span class="filter-text"></span>
+-          <span class="icon-filter filter"></span>
+         </div>
+         <div class="requests"></div>
++        <div class="rules-panel"></div>
++        <input type="file" class="file-input" accept=".har,application/json">
+       </div>
+       <div class="detail"></div>`)
+     )
+@@ -376,6 +1429,17 @@ export default class Network extends Tool {
+     this._$detail = $el.find(c('.detail'))
+     this._$requests = $el.find(c('.requests'))
+     this._$control = $el.find(c('.control'))
++    this._$chips = $el.find(c('.chips'))
++    this._$search = $el.find(c('.search'))
++    this._$overview = $el.find(c('.overview'))
++    this._$file = $el.find(c('.file-input'))
++    this._$langBtn = $el.find(c('.lang-btn'))
+     this._$filterText = $el.find(c('.filter-text'))
++    this._$statTotal = $el.find(c('.stat-total'))
++    this._$statSize = $el.find(c('.stat-size'))
++    this._$statTime = $el.find(c('.stat-time'))
++    this._$statFailed = $el.find(c('.stat-failed'))
++    this._$rulesPanel = $el.find(c('.rules-panel'))
++    this._$control.find(c('.throttle')).val(this._throttleKey)
+   }
+ }
+diff --git a/src/Network/Network.scss b/src/Network/Network.scss
+old mode 100644
+new mode 100755
+index 070f6eb..c34c41f
+--- a/src/Network/Network.scss
++++ b/src/Network/Network.scss
+@@ -1,51 +1,241 @@
+ @use '../style/variable' as *;
+ @use '../style/mixin' as *;
+ 
++// DevTools-inspired status colors (readable on light & dark themes).
++$status-ok: #26a269;
++$status-warn: #e6860d;
++$status-err: #e53935;
++$status-mock: #1a73e8;
++
+ #network {
+   .network {
+     @include absolute();
+-    padding-top: 39px;
++    padding-top: 136px;
+   }
+   .control {
+-    padding: 10px;
++    padding: 0 8px;
+     border-bottom: none;
+     @include control();
+-    .title {
+-      font-size: $font-size;
++    display: flex;
++    align-items: center;
++    font-size: $font-size;
++    color: var(--foreground);
++    [class^='eruda-icon-'],
++    [class*=' icon-'] {
++      position: static;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++      width: 26px;
++      height: 26px;
++      padding: 0;
++      margin-right: 2px;
++      font-size: $font-size-l;
++      flex: none;
+     }
+-    .icon-clear {
+-      left: 23px;
++    .spacer {
++      flex: 1;
+     }
+-    .icon-eye {
+-      right: 0;
++    .icon-record {
++      &.recording {
++        color: var(--console-error-foreground);
++        text-shadow: 0 0 4px var(--console-error-foreground);
++      }
++    }
++    .throttle {
++      max-width: 96px;
++      background: transparent;
++      color: var(--foreground);
++      border: 1px solid var(--border);
++      border-radius: 4px;
++      font-size: 11px;
++      padding: 3px 2px;
++      outline: none;
++      margin-right: 8px;
++    }
++    .lang-btn {
++      background: transparent;
++      color: var(--accent);
++      border: 1px solid var(--accent);
++      border-radius: 12px;
++      font-size: 11px;
++      padding: 2px 10px;
++      cursor: pointer;
++      flex: none;
++      outline: none;
++    }
++    .copy-fetch {
++      font-family: Menlo, Consolas, Monaco, monospace;
++      font-weight: bold;
++    }
++
++    // Custom mask icons (SVG data URI), colored via currentColor.
++    .icon-har,
++    .icon-import,
++    .icon-rules {
++      &:before {
++        content: '';
++        display: block;
++        width: 15px;
++        height: 15px;
++        background-color: currentColor;
++        -webkit-mask-repeat: no-repeat;
++        mask-repeat: no-repeat;
++        -webkit-mask-position: center;
++        mask-position: center;
++        -webkit-mask-size: contain;
++        mask-size: contain;
++      }
++    }
++    .icon-har:before {
++      -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M12 3v11" /%3E%3Cpath d="M7 9l5 5 5-5" /%3E%3Cpath d="M4 20h16" /%3E%3C/svg%3E');
++      mask-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M12 3v11" /%3E%3Cpath d="M7 9l5 5 5-5" /%3E%3Cpath d="M4 20h16" /%3E%3C/svg%3E');
++    }
++    .icon-import:before {
++      -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M12 14V3" /%3E%3Cpath d="M7 8l5-5 5 5" /%3E%3Cpath d="M4 20h16" /%3E%3C/svg%3E');
++      mask-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M12 14V3" /%3E%3Cpath d="M7 8l5-5 5 5" /%3E%3Cpath d="M4 20h16" /%3E%3C/svg%3E');
++    }
++    .icon-rules:before {
++      -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round"%3E%3Cpath d="M4 6h16M4 12h16M4 18h16" /%3E%3Ccircle cx="9" cy="6" r="2" fill="black" stroke="none" /%3E%3Ccircle cx="15" cy="12" r="2" fill="black" stroke="none" /%3E%3Ccircle cx="8" cy="18" r="2" fill="black" stroke="none" /%3E%3C/svg%3E');
++      mask-image: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round"%3E%3Cpath d="M4 6h16M4 12h16M4 18h16" /%3E%3Ccircle cx="9" cy="6" r="2" fill="black" stroke="none" /%3E%3Ccircle cx="15" cy="12" r="2" fill="black" stroke="none" /%3E%3Ccircle cx="8" cy="18" r="2" fill="black" stroke="none" /%3E%3C/svg%3E');
++    }
++  }
++  .file-input {
++    display: none;
++  }
++  .filter-bar {
++    @include absolute(100%, 30px);
++    top: 40px;
++    display: flex;
++    align-items: center;
++    padding: 0 8px;
++    background: var(--darker-background);
++    border-bottom: 1px solid var(--border);
++    z-index: 6;
++    .chips {
++      display: flex;
++      gap: 4px;
++      overflow-x: auto;
++      flex: 1;
++      scrollbar-width: none;
++      &::-webkit-scrollbar {
++        display: none;
++      }
+     }
+-    .icon-copy {
+-      right: 23px;
++    .chip {
++      padding: 2px 9px;
++      border-radius: 10px;
++      font-size: 11px;
++      background: var(--contrast);
++      color: var(--primary);
++      cursor: pointer;
++      white-space: nowrap;
++      flex: none;
++      user-select: none;
++      &.chip-on {
++        background: var(--accent);
++        color: #fff;
++      }
++    }
++    .preserve-toggle {
++      display: flex;
++      align-items: center;
++      gap: 4px;
++      flex: none;
++      margin-left: 8px;
++      font-size: 11px;
++      color: var(--primary);
++      user-select: none;
++      white-space: nowrap;
++      input {
++        margin: 0;
++        accent-color: var(--accent);
++      }
+     }
+-    .icon-filter {
+-      right: 46px;
++    .search {
++      width: 110px;
++      flex: none;
++      margin-left: 8px;
++      border: none;
++      border-bottom: 1px solid var(--border);
++      background: transparent;
++      color: var(--foreground);
++      font-size: $font-size-s;
++      outline: none;
++      padding: 3px 2px;
++      user-select: text;
++    }
++  }
++  .overview {
++    @include absolute(100%, 40px);
++    top: 70px;
++    display: block;
++    border-bottom: 1px solid var(--border);
++    background: var(--background);
++    cursor: pointer;
++    z-index: 5;
++  }
++  .stats-bar {
++    @include absolute(100%, 26px);
++    top: 110px;
++    display: flex;
++    align-items: center;
++    padding: 0 10px;
++    font-size: 12px;
++    color: var(--primary);
++    background: var(--darker-background);
++    border-bottom: 1px solid var(--border);
++    z-index: 5;
++    .stat {
++      margin-right: 12px;
++      white-space: nowrap;
++      overflow: hidden;
++      text-overflow: ellipsis;
++      flex-shrink: 1;
++      min-width: 0;
++    }
++    .stat-total,
++    .stat-failed {
++      cursor: pointer;
++    }
++    .stat-failed {
++      color: var(--console-error-foreground);
++    }
++    .stat-zero {
++      color: var(--primary);
++      opacity: 0.55;
++    }
++    .active {
++      color: var(--accent) !important;
++      text-decoration: underline;
+     }
+     .filter-text {
+       white-space: nowrap;
+       position: absolute;
+-      line-height: 20px;
+-      max-width: 80px;
++      right: 10px;
++      line-height: 26px;
++      max-width: 70px;
+       overflow: hidden;
+-      right: 88px;
+-      font-size: $font-size;
++      font-size: 12px;
+       text-overflow: ellipsis;
+     }
+-    .icon-record {
+-      left: 0;
+-      &.recording {
+-        color: var(--console-error-foreground);
+-        text-shadow: 0 0 4px var(--console-error-foreground);
+-      }
+-    }
+   }
+   .request-error {
+     color: var(--console-error-foreground);
+   }
++  .request-warn {
++    color: $status-warn;
++  }
++  .request-blocked {
++    color: var(--console-error-foreground);
++    opacity: 0.75;
++  }
++  .request-mock {
++    color: $status-mock;
++  }
++  .request-restored {
++    opacity: 0.55;
++  }
+   .luna-data-grid:focus {
+     .luna-data-grid-data-container {
+       .request-error.luna-data-grid-selected {
+@@ -57,6 +247,202 @@
+     border-left: none;
+     border-right: none;
+   }
++
++  // Rules panel: Block / Rewrite / Mock
++  .rules-panel {
++    @include absolute();
++    top: 40px;
++    height: calc(100% - 40px);
++    z-index: 30;
++    display: none;
++    background: var(--background);
++    border-top: 1px solid var(--border);
++    &.show {
++      display: block;
++    }
++    .pn-header {
++      padding: 10px;
++      font-size: $font-size;
++      color: var(--primary);
++      border-bottom: 1px solid var(--border);
++      display: flex;
++      justify-content: space-between;
++      align-items: center;
++    }
++    .pn-close {
++      cursor: pointer;
++      font-size: $font-size-l;
++      padding: 0 4px;
++      &:active {
++        color: var(--accent);
++      }
++    }
++    .pn-tabs {
++      display: flex;
++      border-bottom: 1px solid var(--border);
++    }
++    .pn-tab {
++      display: inline-block;
++      padding: 8px 14px;
++      font-size: $font-size-s;
++      cursor: pointer;
++      color: var(--primary);
++      border-bottom: 2px solid transparent;
++      &.active {
++        color: var(--accent);
++        border-bottom-color: var(--accent);
++      }
++    }
++    .pn-body {
++      @include overflow-auto(y);
++      height: calc(100% - 75px);
++      padding-bottom: 14px;
++    }
++    .pn-enable-row {
++      display: block;
++      padding: 10px 10px 4px;
++      font-size: $font-size-s;
++      color: var(--foreground);
++      input {
++        margin-right: 6px;
++        vertical-align: middle;
++        accent-color: var(--accent);
++      }
++    }
++    .bp-patterns {
++      display: block;
++      width: calc(100% - 20px);
++      margin: 6px 10px;
++      height: 130px;
++      background: var(--darker-background);
++      color: var(--foreground);
++      border: 1px solid var(--border);
++      font-size: $font-size-s;
++      padding: 8px;
++      resize: vertical;
++      outline: none;
++      user-select: text;
++    }
++    .pn-hint {
++      padding: 4px 10px 8px;
++      font-size: 11px;
++      color: var(--primary);
++      opacity: 0.7;
++      line-height: 1.6;
++    }
++    .pn-actions {
++      padding: 0 10px 10px;
++      button {
++        background: var(--contrast);
++        color: var(--accent);
++        border: 1px solid var(--border);
++        padding: 6px 18px;
++        font-size: $font-size-s;
++        border-radius: 3px;
++        outline: none;
++        cursor: pointer;
++        &:active {
++          opacity: 0.8;
++        }
++      }
++    }
++    .rules {
++      padding-top: 4px;
++    }
++    .rule {
++      border: 1px solid var(--border);
++      border-radius: 6px;
++      padding: 6px;
++      margin: 6px 10px;
++      display: flex;
++      flex-wrap: wrap;
++      gap: 6px;
++      align-items: center;
++      input {
++        border: 1px solid var(--border);
++        border-radius: 4px;
++        padding: 4px 6px;
++        font-size: $font-size-s;
++        background: var(--background);
++        color: var(--foreground);
++        outline: none;
++        min-width: 0;
++        user-select: text;
++        &:focus {
++          border-color: var(--accent);
++        }
++      }
++    }
++    .rule-line {
++      display: flex;
++      gap: 6px;
++      align-items: center;
++      width: 100%;
++    }
++    .rr-pattern,
++    .rr-replacement,
++    .mr-pattern {
++      flex: 1;
++      min-width: 50px;
++    }
++    .mr-status {
++      width: 44px;
++      flex: none;
++    }
++    .mr-type {
++      flex: 1;
++      min-width: 60px;
++    }
++    .mr-body {
++      width: 100%;
++      height: 56px;
++      resize: vertical;
++      border: 1px solid var(--border);
++      border-radius: 4px;
++      padding: 4px 6px;
++      font-size: 11px;
++      font-family: Menlo, Consolas, Monaco, monospace;
++      background: var(--darker-background);
++      color: var(--foreground);
++      outline: none;
++      user-select: text;
++    }
++    .rule-en {
++      font-size: 11px;
++      white-space: nowrap;
++      display: flex;
++      align-items: center;
++      gap: 4px;
++      flex: none;
++      color: var(--foreground);
++      input {
++        accent-color: var(--accent);
++      }
++    }
++    .rule-arrow {
++      opacity: 0.6;
++      flex: none;
++    }
++    .rule-del {
++      cursor: pointer;
++      color: $status-err;
++      font-size: $font-size-l;
++      padding: 0 4px;
++      flex: none;
++    }
++    .add {
++      margin: 2px 10px 8px;
++      padding: 5px 12px;
++      border: 1px dashed var(--accent);
++      color: var(--accent);
++      background: transparent;
++      border-radius: 4px;
++      font-size: $font-size-s;
++      outline: none;
++      cursor: pointer;
++    }
++  }
++
+   .detail {
+     @include absolute();
+     z-index: 10;
+@@ -64,7 +450,7 @@
+     padding-top: 40px;
+     background: var(--background);
+     .control {
+-      padding: 10px 35px;
++      padding: 10px 113px 10px 35px;
+       border-bottom: 1px solid var(--border);
+       .url {
+         font-size: $font-size-s;
+@@ -84,57 +470,331 @@
+       .icon-copy {
+         right: 0;
+       }
++      .copy-fetch {
++        right: 69px;
++        padding: 10px;
++        font-size: $font-size;
++        position: absolute;
++        top: 0;
++        cursor: pointer;
++        font-family: Menlo, Consolas, Monaco, monospace;
++        font-weight: bold;
++        &:active {
++          color: var(--accent);
++        }
++      }
++      .icon-curl {
++        right: 92px;
++      }
++      .icon-play {
++        right: 115px;
++      }
++      .icon-curl:before {
++        content: '';
++        display: block;
++        width: 16px;
++        height: 16px;
++        background-color: currentColor;
++        -webkit-mask: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M4 7l5 5-5 5" /%3E%3Cpath d="M12 17h8" /%3E%3C/svg%3E') no-repeat center / contain;
++        mask: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M4 7l5 5-5 5" /%3E%3Cpath d="M12 17h8" /%3E%3C/svg%3E') no-repeat center / contain;
++      }
+     }
+-    .http {
++    .tabs {
++      display: flex;
++      height: 30px;
++      border-bottom: 1px solid var(--border);
++      background: var(--background);
++      @include overflow-auto(x);
++      .tab {
++        flex: 1;
++        min-width: 52px;
++        text-align: center;
++        line-height: 30px;
++        font-size: $font-size-s;
++        color: var(--primary);
++        cursor: pointer;
++        border-bottom: 2px solid transparent;
++        overflow: hidden;
++        white-space: nowrap;
++        text-overflow: ellipsis;
++        &.active {
++          color: var(--accent);
++          border-bottom-color: var(--accent);
++        }
++      }
++    }
++    .tab-content {
+       @include overflow-auto(y);
+-      height: 100%;
+-      .section {
+-        border-top: 1px solid var(--border);
+-        border-bottom: 1px solid var(--border);
+-        margin-top: 10px;
+-        margin-bottom: 10px;
+-        h2 {
+-          background: var(--darker-background);
++      height: calc(100% - 30px);
++    }
++    .section {
++      border-top: 1px solid var(--border);
++      border-bottom: 1px solid var(--border);
++      margin-top: 10px;
++      margin-bottom: 10px;
++      &:first-child {
++        margin-top: 0;
++      }
++      h2 {
++        background: var(--darker-background);
++        color: var(--primary);
++        padding: $padding;
++        line-height: 18px;
++        font-size: $font-size;
++        cursor: pointer;
++        display: flex;
++        align-items: center;
++        user-select: none;
++        margin: 0;
++        .caret {
++          font-size: 12px;
++          margin-right: 6px;
++          transition: transform 0.2s;
++        }
++      }
++      &.collapsed {
++        h2 .caret {
++          transform: rotate(-90deg);
++        }
++        .section-body {
++          display: none;
++        }
++      }
++      table {
++        color: var(--foreground);
++        width: 100%;
++        border-collapse: collapse;
++        * {
++          user-select: text;
++        }
++        th {
++          font-size: 11px;
++          font-weight: normal;
++          text-align: left;
++          padding: 4px 10px;
+           color: var(--primary);
+-          padding: $padding;
+-          line-height: 18px;
+-          font-size: $font-size;
++          opacity: 0.65;
++          border-bottom: 1px solid var(--border);
++        }
++        td {
++          font-size: $font-size-s;
++          padding: 5px 10px;
++          word-break: break-all;
++          vertical-align: top;
++        }
++        .key {
++          white-space: nowrap;
++          font-weight: bold;
++          color: var(--accent);
++          width: 1%;
++        }
++        .st-ok {
++          color: $status-ok;
++          font-weight: bold;
+         }
+-        table {
++        .st-warn {
++          color: $status-warn;
++          font-weight: bold;
++        }
++        .st-err {
++          color: $status-err;
++          font-weight: bold;
++        }
++        .st-mock {
++          color: $status-mock;
++          font-weight: bold;
++        }
++      }
++    }
++    .hint {
++      padding: 8px 10px;
++      font-size: $font-size-s;
++      color: var(--primary);
++      opacity: 0.75;
++      line-height: 1.6;
++      .st-err {
++        color: $status-err;
++        opacity: 1;
++      }
++      .st-mock {
++        color: $status-mock;
++        opacity: 1;
++      }
++    }
++    .st-mock {
++      color: $status-mock;
++    }
++    .init-block {
++      padding: 0 0 10px;
++      .init-file {
++        padding: 0 10px;
++        font-family: Menlo, Consolas, Monaco, monospace;
++        color: var(--accent);
++        font-weight: bold;
++        font-size: $font-size;
++        user-select: text;
++      }
++      .init-url {
++        padding: 4px 10px 0;
++        font-size: 11px;
++        color: var(--primary);
++        word-break: break-all;
++        font-family: Menlo, Consolas, Monaco, monospace;
++        user-select: text;
++      }
++    }
++    .tree {
++      padding: 8px 10px;
++      font-family: Menlo, Consolas, Monaco, monospace;
++      font-size: $font-size-s;
++      line-height: 1.8;
++      user-select: text;
++      details {
++        padding-left: 14px;
++      }
++      summary {
++        cursor: pointer;
++        list-style: none;
++        &::-webkit-details-marker {
++          display: none;
++        }
++        &::before {
++          content: '▸';
++          color: var(--primary);
++          margin-right: 4px;
++          display: inline-block;
++        }
++      }
++      details[open] > summary::before {
++        content: '▾';
++      }
++      .j-line {
++        padding-left: 18px;
++      }
++      .j-key {
++        color: #a626a4;
++        margin-right: 6px;
++      }
++      .j-str {
++        color: #50a14f;
++      }
++      .j-num {
++        color: #4078f2;
++      }
++      .j-bool {
++        color: #b76b01;
++      }
++      .j-null {
++        color: #9aa0a6;
++      }
++      .j-brace {
++        color: var(--primary);
++        margin-left: 6px;
++        font-size: 10px;
++      }
++      .j-more {
++        color: var(--primary);
++        padding-left: 18px;
++      }
++    }
++    .code {
++      user-select: text;
++      @include overflow-auto(x);
++      padding: $padding;
++      font-size: $font-size-s;
++      margin: 0;
++      white-space: pre;
++      font-family: Menlo, Consolas, Monaco, 'Courier New', monospace;
++      color: var(--foreground);
++      line-height: 1.6;
++    }
++    .image-preview {
++      padding: $padding;
++      img {
++        max-width: 100%;
++        max-height: 300px;
++        display: block;
++      }
++    }
++    .timing {
++      padding: 10px 0;
++      .timing-row {
++        display: flex;
++        align-items: center;
++        padding: 4px 10px;
++        .t-label {
++          width: 38%;
++          font-size: $font-size-s;
+           color: var(--foreground);
+-          * {
+-            user-select: text;
++          overflow: hidden;
++          white-space: nowrap;
++          text-overflow: ellipsis;
++        }
++        .t-track {
++          flex: 1;
++          height: 14px;
++          position: relative;
++        }
++        .t-bar {
++          position: absolute;
++          top: 2px;
++          height: 10px;
++          border-radius: 2px;
++          min-width: 2px;
++          &.queueing {
++            background: #9aa0b3;
++          }
++          &.dns {
++            background: #35a853;
++          }
++          &.connect {
++            background: #f5a623;
++          }
++          &.ssl {
++            background: #c77700;
++          }
++          &.sent {
++            background: #4a90d9;
++          }
++          &.wait {
++            background: #7bc96f;
+           }
+-          td {
+-            font-size: $font-size-s;
+-            padding: 5px 10px;
+-            word-break: break-all;
++          &.download {
++            background: #2e7ed4;
+           }
+-          .key {
+-            white-space: nowrap;
++          &.total {
++            background: var(--accent);
++            opacity: 0.85;
++          }
++        }
++        .t-val {
++          width: 70px;
++          text-align: right;
++          font-size: $font-size-s;
++          color: var(--primary);
++          flex-shrink: 0;
++        }
++        &.t-total {
++          border-top: 1px solid var(--border);
++          margin-top: 4px;
++          padding-top: 8px;
++          .t-label,
++          .t-val {
+             font-weight: bold;
+-            color: var(--accent);
+           }
+         }
+       }
+-      .response,
+-      .data {
+-        user-select: text;
+-        @include overflow-auto(x);
+-        padding: $padding;
+-        font-size: $font-size-s;
+-        margin: 10px 0;
+-        white-space: pre-wrap;
+-        border-top: 1px solid var(--border);
+-        color: var(--foreground);
+-        border-bottom: 1px solid var(--border);
+-      }
++    }
++    .http {
++      @include overflow-auto(y);
++      height: 100%;
+     }
+   }
+ }
+ 
+ .safe-area #network {
+-  .http {
++  .http,
++  .tab-content {
+     @include safe-area(padding-bottom, 0px);
+   }
+ }
+@@ -146,15 +806,6 @@
+         .icon-eye {
+           display: none;
+         }
+-        .icon-copy {
+-          right: 0;
+-        }
+-        .icon-filter {
+-          right: 23px;
+-        }
+-        .filter-text {
+-          right: 55px;
+-        }
+       }
+     }
+     .detail {
+diff --git a/src/Network/util.js b/src/Network/util.js
+old mode 100644
+new mode 100755
+index 6f4c53c..38cbf2d
+--- a/src/Network/util.js
++++ b/src/Network/util.js
+@@ -1,6 +1,11 @@
+ import last from 'licia/last'
+ import detectOs from 'licia/detectOs'
+ import arrToMap from 'licia/arrToMap'
++import each from 'licia/each'
++import isJson from 'licia/isJson'
++import escape from 'licia/escape'
++import pkg from '../../package.json'
++import { classPrefix as c } from '../lib/util'
+ 
+ export function getType(contentType) {
+   if (!contentType) return 'unknown'
+@@ -13,6 +18,330 @@ export function getType(contentType) {
+   }
+ }
+ 
++export function formatBytes(bytes) {
++  if (!bytes || bytes <= 0) return '0 B'
++  if (bytes < 1024) return bytes + ' B'
++  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
++  return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
++}
++
++export function formatMs(ms) {
++  if (ms < 1000) return Math.round(ms) + ' ms'
++  return (ms / 1000).toFixed(2) + ' s'
++}
++
++// Parse query string of a url into an array of { name, value }
++export function parseQueryParams(url) {
++  const ret = []
++  try {
++    const urlObj = new URL(url, location.href)
++    urlObj.searchParams.forEach((value, name) => {
++      ret.push({ name, value })
++    })
++  } catch {
++    // Invalid url.
++  }
++  return ret
++}
++
++// Pretty print json text, returns original text if not valid json.
++export function prettyJson(text) {
++  if (isJson(text)) {
++    try {
++      return JSON.stringify(JSON.parse(text), null, 2)
++    } catch {
++      return text
++    }
++  }
++  return text
++}
++
++// Parse document.cookie into an array of { name, value }
++export function getCookieList() {
++  const cookies = []
++  const cookie = document.cookie
++  if (!cookie || cookie.trim() === '') return cookies
++  each(cookie.split(';'), (pair) => {
++    if (pair.trim() === '') return
++    const idx = pair.indexOf('=')
++    const name = idx === -1 ? pair.trim() : pair.slice(0, idx).trim()
++    const value = idx === -1 ? '' : pair.slice(idx + 1).trim()
++    try {
++      cookies.push({
++        name: decodeURIComponent(name),
++        value: decodeURIComponent(value),
++      })
++    } catch {
++      cookies.push({ name, value })
++    }
++  })
++  return cookies
++}
++
++// Find a performance resource entry matching given url.
++export function getResourceTiming(url) {
++  try {
++    if (!window.performance || !performance.getEntriesByType) return null
++    const entries = performance.getEntriesByType('resource')
++    let fallback = null
++    for (let i = entries.length - 1; i >= 0; i--) {
++      const entry = entries[i]
++      if (entry.name === url) return entry
++      // Fall back to entry with same path but different query.
++      if (!fallback && stripQuery(entry.name) === stripQuery(url)) {
++        fallback = entry
++      }
++    }
++    return fallback
++  } catch {
++    return null
++  }
++}
++
++function stripQuery(url) {
++  const idx = url.indexOf('?')
++  return idx === -1 ? url : url.slice(0, idx)
++}
++
++// Extract DevTools-like timing segments (in ms) from a resource timing entry.
++export function getTimingSegments(request) {
++  const entry = getResourceTiming(request.url)
++
++  if (entry) {
++    const start = entry.startTime
++    const total = entry.responseEnd - start
++    if (total >= 0 && total < 1000 * 60 * 60) {
++      const abs = (t) => (t > 0 ? t - start : 0)
++      const dnsStart = abs(entry.domainLookupStart)
++      const dnsEnd = abs(entry.domainLookupEnd)
++      const connectStart = abs(entry.connectStart)
++      const connectEnd = abs(entry.connectEnd)
++      const requestStart = abs(entry.requestStart)
++      const responseStart = abs(entry.responseStart)
++      const responseEnd = abs(entry.responseEnd)
++      const sslStart =
++        entry.secureConnectionStart && entry.secureConnectionStart > 0
++          ? abs(entry.secureConnectionStart)
++          : 0
++      return {
++        total,
++        precise: true,
++        segments: [
++          { name: 'Queueing', from: 0, to: dnsStart, cls: 'queueing' },
++          { name: 'DNS Lookup', from: dnsStart, to: dnsEnd, cls: 'dns' },
++          {
++            name: 'Initial Connection',
++            from: connectStart,
++            to: connectEnd,
++            cls: 'connect',
++          },
++          {
++            name: 'SSL/TLS',
++            from: sslStart,
++            to: connectEnd,
++            cls: 'ssl',
++          },
++          { name: 'Request Sent', from: requestStart, to: requestStart, cls: 'sent' },
++          {
++            name: 'Waiting (TTFB)',
++            from: requestStart,
++            to: responseStart,
++            cls: 'wait',
++          },
++          {
++            name: 'Content Download',
++            from: responseStart,
++            to: responseEnd,
++            cls: 'download',
++          },
++        ],
++      }
++    }
++  }
++
++  // Fallback: only total time is known.
++  const total = request.time || 0
++  return {
++    total,
++    precise: false,
++    segments: [
++      { name: 'Waiting (TTFB)', from: 0, to: total, cls: 'wait' },
++    ],
++  }
++}
++
++// Normalize a headers object / Headers instance into an array of { name, value }
++export function toHeadersArray(headers) {
++  if (!headers) return []
++  const ret = []
++  if (typeof headers.forEach === 'function') {
++    headers.forEach((value, name) => ret.push({ name, value }))
++    return ret
++  }
++  each(headers, (value, name) => ret.push({ name, value }))
++  return ret
++}
++
++// Build a HAR 1.2 log object from network requests.
++export function buildHar(requests) {
++  const entries = []
++  each(requests, (request) => {
++    if (!request.done && request.status !== 'blocked') return
++    entries.push(requestToHarEntry(request))
++  })
++  entries.sort((a, b) => a._startDateTime - b._startDateTime)
++  each(entries, (entry) => delete entry._startDateTime)
++
++  const startedDateTime =
++    entries.length > 0 ? entries[0].startedDateTime : new Date().toISOString()
++
++  return {
++    log: {
++      version: '1.2',
++      creator: { name: 'eruda', version: pkg.version || '3.4.3' },
++      pages: [
++        {
++          startedDateTime,
++          id: 'page_1',
++          title: document.title || location.href,
++          pageTimings: { onContentLoad: -1, onLoad: -1 },
++        },
++      ],
++      entries,
++    },
++  }
++}
++
++function requestToHarEntry(request) {
++  const startedDateTime = new Date(
++    request.startTime || Date.now()
++  ).toISOString()
++  const time = request.time || 0
++  const timing = getTimingSegments(request)
++  const toSec = (ms) => ms / 1000
++  const reqHeaders = toHeadersArray(request.reqHeaders)
++  const resHeaders = toHeadersArray(request.resHeaders)
++  const contentTypeHeader = resHeaders.find(
++    (h) => h.name.toLowerCase() === 'content-type'
++  )
++  const mimeType = contentTypeHeader ? contentTypeHeader.value : ''
++
++  const entry = {
++    pageref: 'page_1',
++    startedDateTime,
++    time: toSec(time),
++    _resourceTime: timing.precise ? toSec(timing.total) : -1,
++    request: {
++      method: request.method,
++      url: request.url,
++      httpVersion: 'HTTP/1.1',
++      headers: reqHeaders,
++      queryString: parseQueryParams(request.url),
++      cookies: [],
++      headersSize: -1,
++      bodySize: request.data ? request.data.length : 0,
++    },
++    response: {
++      status: request.status === 'blocked' ? 403 : request.status || 0,
++      statusText:
++        request.status === 'blocked'
++          ? t('Blocked by eruda')
++          : request.statusText || '',
++      httpVersion: 'HTTP/1.1',
++      headers: resHeaders,
++      cookies: [],
++      content: {
++        size: request.size || 0,
++        mimeType,
++        text: request.resTxt || '',
++      },
++      redirectURL: getHeader(resHeaders, 'location') || '',
++      headersSize: -1,
++      bodySize: request.size || 0,
++    },
++    cache: {},
++    timings: {
++      blocked: -1,
++      dns: -1,
++      connect: -1,
++      send: -1,
++      wait: toSec(time),
++      receive: -1,
++      ssl: -1,
++    },
++    _resourceType: request.subType,
++  }
++
++  if (request.data) {
++    const reqContentType = getHeader(reqHeaders, 'content-type') || ''
++    entry.request.postData = {
++      mimeType: reqContentType,
++      text: request.data,
++    }
++  }
++
++  if (timing.precise) {
++    const segs = timing.segments
++    entry.timings = {
++      blocked: toSec(segVal(segs, 'Queueing')),
++      dns: toSec(segVal(segs, 'DNS Lookup')),
++      connect: toSec(segVal(segs, 'Initial Connection')),
++      send: toSec(segVal(segs, 'Request Sent')),
++      wait: toSec(segVal(segs, 'Waiting (TTFB)')),
++      receive: toSec(segVal(segs, 'Content Download')),
++      ssl: toSec(segVal(segs, 'SSL/TLS')),
++    }
++  }
++
++  if (request.status === 'blocked') {
++    entry._blocked = true
++  }
++
++  entry._startDateTime = request.startTime || 0
++
++  return entry
++}
++
++function segVal(segments, name) {
++  const seg = segments.find((s) => s.name === name)
++  return seg ? Math.max(0, seg.to - seg.from) : 0
++}
++
++function getHeader(headers, name) {
++  const header = headers.find((h) => h.name.toLowerCase() === name)
++  return header ? header.value : ''
++}
++
++// Compile blocklist text (one pattern per line) into matcher list.
++// A pattern can be a literal substring or a /regexp/.
++export function compileBlockPatterns(text) {
++  const matchers = []
++  each(text.split('\n'), (line) => {
++    line = line.trim()
++    if (line === '' || line.startsWith('#')) return
++    if (line.length > 2 && line.startsWith('/') && line.endsWith('/')) {
++      try {
++        const regex = new RegExp(line.slice(1, -1), 'i')
++        matchers.push({ pattern: line, test: (url) => regex.test(url) })
++        return
++      } catch {
++        // Invalid regex, fall back to literal matching.
++      }
++    }
++    const keyword = line.toLowerCase()
++    matchers.push({ pattern: line, test: (url) => url.toLowerCase().includes(keyword) })
++  })
++  return matchers
++}
++
++export function absoluteUrl(url) {
++  try {
++    return new URL(url, location.href).href
++  } catch {
++    return url
++  }
++}
++
+ export function curlStr(request) {
+   let platform = detectOs()
+   if (platform === 'windows') {
+@@ -106,3 +435,259 @@ export function curlStr(request) {
+     )
+   )
+ }
++
++// ---------------- i18n (English / Chinese) ----------------
++// Re-exported from the global i18n module so that every eruda tool
++// shares the same language state (Settings -> Language).
++import { detectLang, getLang, setLang, t } from '../lib/i18n'
++
++export { detectLang, getLang, setLang, t }
++
++// ---------------- request matching / classification ----------------
++
++// Compile a pattern that is either "/regex/" or a literal substring.
++export function compilePattern(pattern) {
++  pattern = String(pattern == null ? '' : pattern).trim()
++  if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
++    try {
++      const regex = new RegExp(pattern.slice(1, -1), 'i')
++      return {
++        test: (url) => regex.test(url),
++        replace: (url, to) => url.replace(new RegExp(pattern.slice(1, -1), 'g'), to),
++      }
++    } catch {
++      // Invalid regex, fall back to literal matching.
++    }
++  }
++  const keyword = pattern.toLowerCase()
++  return {
++    test: (url) => keyword !== '' && url.toLowerCase().includes(keyword),
++    replace: (url, to) => url.split(pattern).join(to),
++  }
++}
++
++// Filter text supports /regex/ and -negative tokens.
++export function compileFilter(text) {
++  const tokens = String(text || '')
++    .trim()
++    .split(/\s+/)
++  const rules = []
++  each(tokens, (token) => {
++    if (!token) return
++    let negative = false
++    if (token.length > 1 && token.startsWith('-')) {
++      negative = true
++      token = token.slice(1)
++    }
++    const matcher = compilePattern(token)
++    rules.push({ negative, test: matcher.test })
++  })
++  if (rules.length === 0) return null
++  return (r) => {
++    const haystack = (r.url + ' ' + r.method + ' ' + r.name).toLowerCase()
++    for (let i = 0; i < rules.length; i++) {
++      const hit = rules[i].test(haystack)
++      if (rules[i].negative && hit) return false
++      if (!rules[i].negative && !hit) return false
++    }
++    return true
++  }
++}
++
++export function isFailed(r) {
++  return (
++    r.blocked ||
++    r.status === 0 ||
++    (typeof r.status === 'number' && r.status >= 400)
++  )
++}
++
++export function classifyChip(r) {
++  if (r.chipType) return r.chipType
++  const resHeaders = toHeadersArray(r.resHeaders)
++  const contentTypeHeader = resHeaders.find((h) => h.name.toLowerCase() === 'content-type')
++  const ct = contentTypeHeader ? contentTypeHeader.value.toLowerCase() : ''
++  const url = String(r.url || '').toLowerCase()
++  if (ct.includes('image/') || /\.(png|jpe?g|gif|webp|svg|ico|bmp)([?#]|$)/.test(url)) return 'img'
++  if (ct.includes('video/') || ct.includes('audio/') || /\.(mp4|webm|mp3|wav|ogg|m4a)([?#]|$)/.test(url))
++    return 'media'
++  if (ct.includes('font') || /\.(woff2?|ttf|otf|eot)([?#]|$)/.test(url)) return 'font'
++  if (ct.includes('text/css') || /\.css([?#]|$)/.test(url)) return 'css'
++  if (ct.includes('javascript') || ct.includes('ecmascript') || /\.m?js([?#]|$)/.test(url)) return 'js'
++  if (ct.includes('text/html') || /\.html?([?#]|$)/.test(url)) return 'doc'
++  return 'other'
++}
++
++// Detect the initiator (first script frame outside this module).
++export function parseInitiator() {
++  let stack = ''
++  try {
++    stack = new Error().stack || ''
++  } catch {
++    return null
++  }
++  const frames = []
++  each(stack.split('\n'), (line) => {
++    const m = line.match(/((?:https?:\/\/|file:\/\/)[^\s)(]+?):(\d+):(\d+)/)
++    if (m) frames.push({ file: m[1], line: +m[2], col: +m[3] })
++  })
++  if (frames.length === 0) return null
++  const own = frames[0].file
++  for (let i = 0; i < frames.length; i++) {
++    if (frames[i].file !== own) return frames[i]
++  }
++  return frames[frames.length - 1]
++}
++
++export function initiatorLabel(frame) {
++  if (!frame) return ''
++  return getFileName(frame.file) + ':' + frame.line
++}
++
++export function getFileName(url) {
++  let ret = String(url).split('?')[0].split('#')[0].split('/').pop()
++  if (ret === '') {
++    try {
++      ret = new URL(url, location.href).hostname
++    } catch {
++      ret = url
++    }
++  }
++  return ret
++}
++
++// Copy as fetch snippet.
++export function fetchStr(request) {
++  const method = request.method.toUpperCase()
++  const headers = toHeadersArray(request.reqHeaders).filter((h) => {
++    const name = h.name.toLowerCase()
++    return name !== 'content-length' && name !== 'host'
++  })
++  const lines = [`fetch('${request.url}', {`]
++  if (method !== 'GET') lines.push(`  method: '${method}',`)
++  if (headers.length > 0) {
++    lines.push('  headers: {')
++    each(headers, (h) => {
++      lines.push(`    '${h.name}': '${String(h.value).replace(/'/g, "\\'")}',`)
++    })
++    lines.push('  },')
++  }
++  if (method !== 'GET' && method !== 'HEAD' && request.data) {
++    lines.push(
++      `  body: '${String(request.data).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}',`
++    )
++  }
++  lines.push('})')
++  return lines.join('\n')
++}
++
++// ---------------- throttling ----------------
++
++export const THROTTLE_PROFILES = {
++  none: null,
++  slow3g: { latency: 400, bps: 50 * 1024, label: 'Slow 3G' },
++  fast3g: { latency: 150, bps: 180 * 1024, label: 'Fast 3G' },
++  offline: { offline: true, label: 'Offline' },
++}
++
++// ---------------- HAR import ----------------
++
++// Convert HAR entries into records shown in the list.
++export function harToRecords(har) {
++  if (!har || !har.log || !Array.isArray(har.log.entries)) return null
++  const records = []
++  each(har.log.entries, (entry, idx) => {
++    const req = entry.request || {}
++    const res = entry.response || {}
++    const content = res.content || {}
++    const reqHeaders = {}
++    each(req.headers || [], (h) => (reqHeaders[h.name] = h.value))
++    const resHeaders = {}
++    each(res.headers || [], (h) => (resHeaders[h.name.toLowerCase()] = h.value))
++    const mime = content.mimeType || ''
++    const tt = getType(mime)
++    let startTime = Date.now()
++    try {
++      startTime = Date.parse(entry.startedDateTime) || Date.now()
++    } catch {
++      // Keep fallback.
++    }
++    records.push({
++      id: 'har-' + Date.now() + '-' + idx,
++      name: getFileName(req.url || ''),
++      url: req.url || '',
++      method: (req.method || 'GET').toUpperCase(),
++      reqHeaders,
++      data: req.postData && req.postData.text ? req.postData.text : '',
++      status: res.status || 0,
++      type: tt.type,
++      subType: tt.subType,
++      size: content.size || 0,
++      time: Math.round((entry.time || 0) * 1000),
++      displayTime: formatMs(Math.round((entry.time || 0) * 1000)),
++      startTime,
++      resTxt: content.text || '',
++      resHeaders,
++      done: true,
++      imported: true,
++    })
++  })
++  return records
++}
++
++// ---------------- JSON tree (Preview) ----------------
++
++const JSON_NODE_CAP = 300
++
++function jsonNode(value, keyLabel, counter) {
++  if (counter.count > JSON_NODE_CAP) return ''
++  counter.count++
++  const isObj = value && typeof value === 'object'
++  if (isObj) {
++    const keys = Object.keys(value)
++    const summary = keys.length
++      ? keys.length + ' ' + (Array.isArray(value) ? 'items' : 'keys')
++      : Array.isArray(value)
++        ? '[]'
++        : '{}'
++    let html = `<details class="${c('j-node')}" open><summary><span class="${c(
++      'j-key'
++    )}">${escape(keyLabel)}</span><span class="${c('j-brace')}">${escape(
++      summary
++    )}</span></summary>`
++    const limit = Math.min(keys.length, 60)
++    for (let i = 0; i < limit; i++) {
++      html += jsonNode(value[keys[i]], keys[i], counter)
++    }
++    if (keys.length > limit) {
++      html += `<div class="${c('j-more')}">… ${keys.length - limit} ${t('more')}</div>`
++    }
++    html += '</details>'
++    return html
++  }
++  let cls = 'j-null'
++  let text = 'null'
++  if (typeof value === 'string') {
++    cls = 'j-str'
++    text = '"' + (value.length > 500 ? value.slice(0, 500) + '…' : value) + '"'
++  } else if (typeof value === 'number') {
++    cls = 'j-num'
++    text = String(value)
++  } else if (typeof value === 'boolean') {
++    cls = 'j-bool'
++    text = String(value)
++  }
++  return `<div class="${c('j-line')}"><span class="${c('j-key')}">${escape(
++    keyLabel
++  )}</span><span class="${c(cls)}">${escape(text)}</span></div>`
++}
++
++// Returns collapsible JSON tree html, or null when text is not json.
++export function jsonTreeHtml(text) {
++  try {
++    const data = JSON.parse(text)
++    return `<div class="${c('tree')}">${jsonNode(data, '', { count: 0 })}</div>`
++  } catch {
++    return null
++  }
++}
+diff --git a/src/Resources/Cookie.js b/src/Resources/Cookie.js
+old mode 100644
+new mode 100755
+index c9f84c5..95c9d8b
+--- a/src/Resources/Cookie.js
++++ b/src/Resources/Cookie.js
+@@ -7,6 +7,8 @@ import LunaModal from 'luna-modal'
+ import LunaDataGrid from 'luna-data-grid'
+ import { setState, getState } from './util'
+ import chobitsu from '../lib/chobitsu'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import { classPrefix as c } from '../lib/util'
+ 
+ export default class Cookie {
+@@ -17,24 +19,36 @@ export default class Cookie {
+ 
+     this._initTpl()
+     this._dataGrid = new LunaDataGrid(this._$dataGrid.get(0), {
+-      columns: [
+-        {
+-          id: 'key',
+-          title: 'Key',
+-          weight: 30,
+-        },
+-        {
+-          id: 'value',
+-          title: 'Value',
+-          weight: 90,
+-        },
+-      ],
++      columns: this._gridColumns(),
+       minHeight: 60,
+       maxHeight: 223,
+     })
++    emitter.on(emitter.I18N, this._onI18n)
+ 
+     this._bindEvent()
+   }
++  destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
++  }
++  _gridColumns() {
++    return [
++      { id: 'key', title: t('Key'), weight: 30 },
++      { id: 'value', title: t('Value'), weight: 90 },
++    ]
++  }
++  _onI18n = () => {
++    if (this._dataGrid) {
++      const grid = this._dataGrid
++      grid.setOption('columns', this._gridColumns())
++      if (grid.renderHeader) grid.renderHeader()
++    }
++    if (this._$container) {
++      const titleEl = this._$container.find(c('.title')).get(0)
++      if (titleEl && titleEl.childNodes[0]) {
++        titleEl.childNodes[0].textContent = t('Cookie')
++      }
++    }
++  }
+   refresh() {
+     const $container = this._$container
+     const dataGrid = this._dataGrid
+@@ -66,7 +80,7 @@ export default class Cookie {
+ 
+     $container.html(
+       c(`<h2 class="title">
+-      Cookie
++      ${t('Cookie')}
+       <div class="btn refresh-cookie">
+         <span class="icon-refresh"></span>
+       </div>
+@@ -126,7 +140,7 @@ export default class Cookie {
+ 
+     this._$container
+       .on('click', c('.refresh-cookie'), () => {
+-        devtools.notify('Refreshed', { icon: 'success' })
++        devtools.notify(t('Refreshed'), { icon: 'success' })
+         this.refresh()
+       })
+       .on('click', c('.clear-cookie'), () => {
+@@ -154,10 +168,10 @@ export default class Cookie {
+       .on('click', c('.copy-cookie'), () => {
+         const key = this._selectedItem
+         copy(this._getVal(key))
+-        devtools.notify('Copied', { icon: 'success' })
++        devtools.notify(t('Copied'), { icon: 'success' })
+       })
+       .on('click', c('.filter'), () => {
+-        LunaModal.prompt('Filter').then((filter) => {
++        LunaModal.prompt(t('Filter')).then((filter) => {
+           if (isNull(filter)) return
+           filter = trim(filter)
+           this._filter = filter
+diff --git a/src/Resources/Resources.js b/src/Resources/Resources.js
+old mode 100644
+new mode 100755
+index f33aa47..60f0875
+--- a/src/Resources/Resources.js
++++ b/src/Resources/Resources.js
+@@ -14,6 +14,8 @@ import concat from 'licia/concat'
+ import map from 'licia/map'
+ import { isErudaEl, classPrefix as c } from '../lib/util'
+ import evalCss from '../lib/evalCss'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import Storage from './Storage'
+ import Cookie from './Cookie'
+ import { setState, getState } from './util'
+@@ -51,6 +53,11 @@ export default class Resources extends Tool {
+     this._bindEvent()
+     this._initObserver()
+     this._initCfg()
++
++    emitter.on(emitter.I18N, this._onI18n)
++  }
++  _onI18n = () => {
++    if (this.active) this.refresh()
+   }
+   refresh() {
+     return this.refreshLocalStorage()
+@@ -62,6 +69,7 @@ export default class Resources extends Tool {
+       .refreshImage()
+   }
+   destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
+     super.destroy()
+ 
+     this._localStorage.destroy()
+@@ -82,7 +90,7 @@ export default class Resources extends Tool {
+     scriptData = unique(scriptData)
+ 
+     const scriptState = getState('script', scriptData.length)
+-    let scriptDataHtml = '<li>Empty</li>'
++    let scriptDataHtml = `<li>${t('Empty')}</li>`
+     if (!isEmpty(scriptData)) {
+       scriptDataHtml = map(scriptData, (script) => {
+         script = escape(script)
+@@ -93,7 +101,7 @@ export default class Resources extends Tool {
+     }
+ 
+     const scriptHtml = `<h2 class="${c('title')}">
+-      Script
++      ${t('Script')}
+       <div class="${c('btn refresh-script')}">
+         <span class="${c('icon-refresh')}"></span>
+       </div>
+@@ -120,7 +128,7 @@ export default class Resources extends Tool {
+     stylesheetData = unique(stylesheetData)
+ 
+     const stylesheetState = getState('stylesheet', stylesheetData.length)
+-    let stylesheetDataHtml = '<li>Empty</li>'
++    let stylesheetDataHtml = `<li>${t('Empty')}</li>`
+     if (!isEmpty(stylesheetData)) {
+       stylesheetDataHtml = map(stylesheetData, (stylesheet) => {
+         stylesheet = escape(stylesheet)
+@@ -131,7 +139,7 @@ export default class Resources extends Tool {
+     }
+ 
+     const stylesheetHtml = `<h2 class="${c('title')}">
+-      Stylesheet
++      ${t('Stylesheet')}
+       <div class="${c('btn refresh-stylesheet')}">
+         <span class="${c('icon-refresh')}"></span>
+       </div>
+@@ -158,7 +166,7 @@ export default class Resources extends Tool {
+ 
+     iframeData = unique(iframeData)
+ 
+-    let iframeDataHtml = '<li>Empty</li>'
++    let iframeDataHtml = `<li>${t('Empty')}</li>`
+     if (!isEmpty(iframeData)) {
+       iframeDataHtml = map(iframeData, (iframe) => {
+         iframe = escape(iframe)
+@@ -168,7 +176,7 @@ export default class Resources extends Tool {
+       }).join('')
+     }
+     const iframeHtml = `<h2 class="${c('title')}">
+-      Iframe
++      ${t('Iframe')}
+       <div class="${c('btn refresh-iframe')}">
+         <span class="${c('icon-refresh')}"></span>
+       </div>
+@@ -228,7 +236,7 @@ export default class Resources extends Tool {
+     imageData.sort()
+ 
+     const imageState = getState('image', imageData.length)
+-    let imageDataHtml = '<li>Empty</li>'
++    let imageDataHtml = `<li>${t('Empty')}</li>`
+     if (!isEmpty(imageData)) {
+       // prettier-ignore
+       imageDataHtml = map(imageData, (image) => {
+@@ -239,7 +247,7 @@ export default class Resources extends Tool {
+     }
+ 
+     const imageHtml = `<h2 class="${c('title')}">
+-      Image
++      ${t('Image')}
+       <div class="${c('btn refresh-image')}">
+         <span class="${c('icon-refresh')}"></span>
+       </div>
+@@ -290,19 +298,19 @@ export default class Resources extends Tool {
+ 
+     $el
+       .on('click', '.eruda-refresh-script', () => {
+-        container.notify('Refreshed', { icon: 'success' })
++        container.notify(t('Refreshed'), { icon: 'success' })
+         this.refreshScript()
+       })
+       .on('click', '.eruda-refresh-stylesheet', () => {
+-        container.notify('Refreshed', { icon: 'success' })
++        container.notify(t('Refreshed'), { icon: 'success' })
+         this.refreshStylesheet()
+       })
+       .on('click', '.eruda-refresh-iframe', () => {
+-        container.notify('Refreshed', { icon: 'success' })
++        container.notify(t('Refreshed'), { icon: 'success' })
+         this.refreshIframe()
+       })
+       .on('click', '.eruda-refresh-image', () => {
+-        container.notify('Refreshed', { icon: 'success' })
++        container.notify(t('Refreshed'), { icon: 'success' })
+         this.refreshImage()
+       })
+       .on('click', '.eruda-img-link', function () {
+diff --git a/src/Resources/Resources.scss b/src/Resources/Resources.scss
+old mode 100644
+new mode 100755
+diff --git a/src/Resources/Storage.js b/src/Resources/Storage.js
+old mode 100644
+new mode 100755
+index bb60f00..4164abf
+--- a/src/Resources/Storage.js
++++ b/src/Resources/Storage.js
+@@ -8,6 +8,7 @@ import isNull from 'licia/isNull'
+ import trim from 'licia/trim'
+ import copy from 'licia/copy'
+ import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import { safeStorage, classPrefix as c } from '../lib/util'
+ 
+ export default class Storage {
+@@ -21,26 +22,38 @@ export default class Storage {
+ 
+     this._initTpl()
+     this._dataGrid = new LunaDataGrid(this._$dataGrid.get(0), {
+-      columns: [
+-        {
+-          id: 'key',
+-          title: 'Key',
+-          weight: 30,
+-        },
+-        {
+-          id: 'value',
+-          title: 'Value',
+-          weight: 90,
+-        },
+-      ],
++      columns: this._gridColumns(),
+       minHeight: 60,
+       maxHeight: 223,
+     })
++    emitter.on(emitter.I18N, this._onI18n)
+ 
+     this._bindEvent()
+   }
++  _gridColumns() {
++    return [
++      { id: 'key', title: t('Key'), weight: 30 },
++      { id: 'value', title: t('Value'), weight: 90 },
++    ]
++  }
++  _onI18n = () => {
++    if (this._dataGrid) {
++      const grid = this._dataGrid
++      grid.setOption('columns', this._gridColumns())
++      if (grid.renderHeader) grid.renderHeader()
++    }
++    if (this._$container) {
++      this._$container
++        .find(c('.title'))
++        .get(0)
++        .childNodes &&
++        (this._$container.find(c('.title')).get(0).childNodes[0].textContent =
++          this._type === 'local' ? t('Local Storage') : t('Session Storage'))
++    }
++  }
+   destroy() {
+     emitter.off(emitter.SCALE, this._updateGridHeight)
++    emitter.off(emitter.I18N, this._onI18n)
+   }
+   refresh() {
+     const dataGrid = this._dataGrid
+@@ -107,11 +120,10 @@ export default class Storage {
+   }
+   _initTpl() {
+     const $container = this._$container
+-    const type = this._type
+ 
+     $container.html(
+       c(`<h2 class="title">
+-      ${type === 'local' ? 'Local' : 'Session'} Storage
++      ${this._type === 'local' ? t('Local Storage') : t('Session Storage')}
+       <div class="btn refresh-storage">
+         <span class="icon icon-refresh"></span>
+       </div>
+@@ -155,7 +167,7 @@ export default class Storage {
+ 
+     this._$container
+       .on('click', c('.refresh-storage'), () => {
+-        devtools.notify('Refreshed', { icon: 'success' })
++        devtools.notify(t('Refreshed'), { icon: 'success' })
+         this.refresh()
+       })
+       .on('click', c('.clear-storage'), () => {
+@@ -181,10 +193,10 @@ export default class Storage {
+       .on('click', c('.copy-storage'), () => {
+         const key = this._selectedItem
+         copy(this._getVal(key))
+-        devtools.notify('Copied', { icon: 'success' })
++        devtools.notify(t('Copied'), { icon: 'success' })
+       })
+       .on('click', c('.filter'), () => {
+-        LunaModal.prompt('Filter').then((filter) => {
++        LunaModal.prompt(t('Filter')).then((filter) => {
+           if (isNull(filter)) return
+           filter = trim(filter)
+           this._$filterText.text(filter)
+diff --git a/src/Resources/util.js b/src/Resources/util.js
+old mode 100644
+new mode 100755
+diff --git a/src/Settings/Settings.js b/src/Settings/Settings.js
+old mode 100644
+new mode 100755
+index 11af2f0..263f9ef
+--- a/src/Settings/Settings.js
++++ b/src/Settings/Settings.js
+@@ -5,10 +5,13 @@ import uniqId from 'licia/uniqId'
+ import each from 'licia/each'
+ import filter from 'licia/filter'
+ import isStr from 'licia/isStr'
++import isObj from 'licia/isObj'
+ import contain from 'licia/contain'
+ import clone from 'licia/clone'
+ import evalCss from '../lib/evalCss'
+ import LunaSetting from 'luna-setting'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ 
+ export default class Settings extends Tool {
+   constructor() {
+@@ -18,6 +21,8 @@ export default class Settings extends Tool {
+ 
+     this.name = 'settings'
+     this._settings = []
++    // Recorded entry operations, replayed when the language changes.
++    this._ops = []
+   }
+   init($el) {
+     super.init($el)
+@@ -25,13 +30,22 @@ export default class Settings extends Tool {
+     this._setting = new LunaSetting($el.get(0))
+ 
+     this._bindEvent()
++
++    emitter.on(emitter.I18N, this._onI18n)
++  }
++  destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
++    this._setting.destroy()
++    super.destroy()
++
++    evalCss.remove(this._style)
+   }
+   remove(config, key) {
+     if (isStr(config)) {
+       const self = this
+       this._$el.find('.luna-setting-item-title').each(function () {
+         const $this = $(this)
+-        if ($this.text() === config) {
++        if ($this.text() === config || $this.text() === t(config)) {
+           self._setting.remove(this.settingItem)
+         }
+       })
+@@ -50,68 +64,88 @@ export default class Settings extends Tool {
+ 
+     return this
+   }
+-  destroy() {
+-    this._setting.destroy()
+-    super.destroy()
+-
+-    evalCss.remove(this._style)
+-  }
+   clear() {
+     this._settings = []
++    this._ops = []
+     this._setting.clear()
+   }
+   switch(config, key, desc) {
+     const id = this._genId()
+ 
+-    const item = this._setting.appendCheckbox(id, !!config.get(key), desc)
++    const item = this._setting.appendCheckbox(id, !!config.get(key), t(desc))
+     this._settings.push({ config, key, id, item })
++    this._ops.push({ method: 'switch', args: [config, key, desc] })
+ 
+     return this
+   }
+   select(config, key, desc, selections) {
+     const id = this._genId()
+ 
++    // Accept either an array of values (label = t(value)) or a
++    // { value: label } map (label = t(label)) so that stored config
++    // values stay stable while displayed labels get translated.
++    // NB: luna-setting expects a { displayText: value } map.
++    const isMap = isObj(selections) && !Array.isArray(selections)
+     const selectOptions = {}
+-    each(selections, (selection) => (selectOptions[selection] = selection))
++    if (isMap) {
++      each(selections, (label, value) => (selectOptions[t(label)] = value))
++    } else {
++      each(selections, (selection) => (selectOptions[t(selection)] = selection))
++    }
+     const item = this._setting.appendSelect(
+       id,
+       config.get(key),
+       '',
+-      desc,
++      t(desc),
+       selectOptions
+     )
+     this._settings.push({ config, key, id, item })
++    this._ops.push({ method: 'select', args: [config, key, desc, selections] })
+ 
+     return this
+   }
+   range(config, key, desc, { min = 0, max = 1, step = 0.1 }) {
+     const id = this._genId()
+ 
+-    const item = this._setting.appendNumber(id, config.get(key), desc, {
++    const item = this._setting.appendNumber(id, config.get(key), t(desc), {
+       max,
+       min,
+       step,
+       range: true,
+     })
+     this._settings.push({ config, key, min, max, step, id, item })
++    this._ops.push({
++      method: 'range',
++      args: [config, key, desc, { min, max, step }],
++    })
+ 
+     return this
+   }
+   button(text, handler) {
+-    this._setting.appendButton(text, handler)
++    this._setting.appendButton(t(text), handler)
++    this._ops.push({ method: 'button', args: [text, handler] })
+ 
+     return this
+   }
+   separator() {
+     this._setting.appendSeparator()
++    this._ops.push({ method: 'separator', args: [] })
+ 
+     return this
+   }
+   text(text) {
+-    this._setting.appendTitle(text)
++    this._setting.appendTitle(t(text))
++    this._ops.push({ method: 'text', args: [text] })
+ 
+     return this
+   }
++  _onI18n = () => {
++    // Rebuild every entry so titles follow the new language.
++    const ops = this._ops
++    this.clear()
++    each(ops, (op) => this[op.method].apply(this, op.args))
++    this._cleanSeparator()
++  }
+   // Merge adjacent separators
+   _cleanSeparator() {
+     const children = clone(this._$el.get(0).children)
+diff --git a/src/Settings/Settings.scss b/src/Settings/Settings.scss
+old mode 100644
+new mode 100755
+diff --git a/src/Snippets/Snippets.js b/src/Snippets/Snippets.js
+old mode 100644
+new mode 100755
+index 3a8a8cd..dd60a54
+--- a/src/Snippets/Snippets.js
++++ b/src/Snippets/Snippets.js
+@@ -6,6 +6,8 @@ import escape from 'licia/escape'
+ import map from 'licia/map'
+ import remove from 'licia/remove'
+ import evalCss from '../lib/evalCss'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import { classPrefix as c } from '../lib/util'
+ 
+ export default class Snippets extends Tool {
+@@ -23,12 +25,34 @@ export default class Snippets extends Tool {
+ 
+     this._bindEvent()
+     this._addDefSnippets()
++
++    emitter.on(emitter.I18N, this._onI18n)
+   }
+   destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
+     super.destroy()
+ 
+     evalCss.remove(this._style)
+   }
++  _onI18n = () => {
++    this._render()
++  }
++  _render() {
++    const html = map(this._snippets, (snippet, idx) => {
++      return `<div class="${c('section run')}" data-idx="${idx}">
++        <h2 class="${c('name')}">${escape(t(snippet.name))}
++          <div class="${c('btn')}">
++            <span class="${c('icon-play')}"></span>
++          </div>
++        </h2>
++        <div class="${c('description')}">
++          ${escape(t(snippet.desc))}
++        </div>
++      </div>`
++    }).join('')
++
++    this._renderHtml(html)
++  }
+   add(name, fn, desc) {
+     this._snippets.push({ name, fn, desc })
+ 
+@@ -75,22 +99,6 @@ export default class Snippets extends Tool {
+       this.add(snippet.name, snippet.fn, snippet.desc)
+     })
+   }
+-  _render() {
+-    const html = map(this._snippets, (snippet, idx) => {
+-      return `<div class="${c('section run')}" data-idx="${idx}">
+-        <h2 class="${c('name')}">${escape(snippet.name)}
+-          <div class="${c('btn')}">
+-            <span class="${c('icon-play')}"></span>
+-          </div>
+-        </h2>
+-        <div class="${c('description')}">
+-          ${escape(snippet.desc)}
+-        </div>
+-      </div>`
+-    }).join('')
+-
+-    this._renderHtml(html)
+-  }
+   _renderHtml(html) {
+     if (html === this._lastHtml) return
+     this._lastHtml = html
+diff --git a/src/Snippets/Snippets.scss b/src/Snippets/Snippets.scss
+old mode 100644
+new mode 100755
+diff --git a/src/Snippets/defSnippets.js b/src/Snippets/defSnippets.js
+old mode 100644
+new mode 100755
+index 32f4a38..9904ae9
+--- a/src/Snippets/defSnippets.js
++++ b/src/Snippets/defSnippets.js
+@@ -9,6 +9,7 @@ import loadJs from 'licia/loadJs'
+ import trim from 'licia/trim'
+ import LunaModal from 'luna-modal'
+ import { isErudaEl } from '../lib/util'
++import { t } from '../lib/i18n'
+ import evalCss from '../lib/evalCss'
+ 
+ let style = null
+@@ -43,7 +44,7 @@ export default [
+   {
+     name: 'Search Text',
+     fn() {
+-      LunaModal.prompt('Enter the text').then((keyword) => {
++      LunaModal.prompt(t('Enter the text')).then((keyword) => {
+         if (!keyword || trim(keyword) === '') {
+           return
+         }
+diff --git a/src/Snippets/searchText.scss b/src/Snippets/searchText.scss
+old mode 100644
+new mode 100755
+diff --git a/src/Sources/Sources.js b/src/Sources/Sources.js
+old mode 100644
+new mode 100755
+index 35b5d9b..9764652
+--- a/src/Sources/Sources.js
++++ b/src/Sources/Sources.js
+@@ -10,6 +10,8 @@ import replaceAll from 'licia/replaceAll'
+ import highlight from 'licia/highlight'
+ import LunaTextViewer from 'luna-text-viewer'
+ import evalCss from '../lib/evalCss'
++import emitter from '../lib/emitter'
++import { t } from '../lib/i18n'
+ import { classPrefix as c } from '../lib/util'
+ 
+ export default class Sources extends Tool {
+@@ -27,8 +29,11 @@ export default class Sources extends Tool {
+     this._container = container
+     this._bindEvent()
+     this._initCfg()
++
++    emitter.on(emitter.I18N, this._onI18n)
+   }
+   destroy() {
++    emitter.off(emitter.I18N, this._onI18n)
+     super.destroy()
+ 
+     evalCss.remove(this._style)
+@@ -95,7 +100,7 @@ export default class Sources extends Tool {
+     ajax({
+       url: location.href,
+       success: (data) => (this._html = data),
+-      error: () => (this._html = 'Sorry, unable to fetch source code:('),
++      error: () => (this._html = t('Sorry, unable to fetch source code:(')),
+       complete: () => {
+         this._isGettingHtml = false
+         this._renderDef()
+@@ -103,6 +108,9 @@ export default class Sources extends Tool {
+       dataType: 'raw',
+     })
+   }
++  _onI18n = () => {
++    if (this._data) this._render()
++  }
+   _bindEvent() {
+     this._container.on('showTool', (name, lastTool) => {
+       if (name !== this.name && lastTool.name === this.name) {
+diff --git a/src/Sources/Sources.scss b/src/Sources/Sources.scss
+old mode 100644
+new mode 100755
+diff --git a/src/eruda.js b/src/eruda.js
+old mode 100644
+new mode 100755
+diff --git a/src/index.js b/src/index.js
+old mode 100644
+new mode 100755
+diff --git a/src/lib/chobitsu.js b/src/lib/chobitsu.js
+old mode 100644
+new mode 100755
+diff --git a/src/lib/emitter.js b/src/lib/emitter.js
+old mode 100644
+new mode 100755
+index c94cb65..08ca2e5
+--- a/src/lib/emitter.js
++++ b/src/lib/emitter.js
+@@ -4,5 +4,6 @@ const emitter = new Emitter()
+ emitter.ADD = 'ADD'
+ emitter.SHOW = 'SHOW'
+ emitter.SCALE = 'SCALE'
++emitter.I18N = 'I18N'
+ 
+ export default emitter
+diff --git a/src/lib/empty.js b/src/lib/empty.js
+old mode 100644
+new mode 100755
+diff --git a/src/lib/evalCss.js b/src/lib/evalCss.js
+old mode 100644
+new mode 100755
+diff --git a/src/lib/logger.js b/src/lib/logger.js
+old mode 100644
+new mode 100755
+diff --git a/src/lib/micromark.js b/src/lib/micromark.js
+old mode 100644
+new mode 100755
+diff --git a/src/lib/themes.js b/src/lib/themes.js
+old mode 100644
+new mode 100755
+index 86c4da4..a1698d7
+--- a/src/lib/themes.js
++++ b/src/lib/themes.js
+@@ -93,50 +93,64 @@ export function isDarkTheme(theme) {
+ 
+ // prettier-ignore
+ export default {
++  // Chrome DevTools "Light" palette.
+   Light: createLightTheme({
+-    darkerBackground: '#f3f3f3',
+-    background: '#fff',
+-    foreground: '#333',
+-    selectForeground: '#333',
++    darkerBackground: '#f1f3f4',
++    background: '#ffffff',
++    foreground: '#202124',
++    selectForeground: '#202124',
+     accent: '#1a73e8',
+-    highlight: '#eaeaea',
+-    border: '#ccc',
+-    primary: '#333',
+-    contrast: '#f2f7fd',
++    highlight: '#e8f0fe',
++    border: '#dadce0',
++    primary: '#202124',
++    contrast: '#f8f9fa',
+     varColor: '#c80000',
+     stringColor: '#1a1aa6',
+     keywordColor: '#881280',
+     numberColor: '#1c00cf',
+-    operatorColor: '#808080',
+-    linkColor: '#1155cc',
+-    textColor: '#8097bd',
++    operatorColor: '#5f6368',
++    linkColor: '#1a73e8',
++    textColor: '#5f6368',
+     tagNameColor: '#881280',
+     functionColor: '#222',
+     attributeNameColor: '#994500',
+     commentColor: '#236e25',
+     cssProperty: '#c80000',
++    consoleWarnBackground: '#fef7e0',
++    consoleWarnForeground: '#9a6b00',
++    consoleWarnBorder: '#f9e6a0',
++    consoleErrorBackground: '#fcecec',
++    consoleErrorForeground: '#d93025',
++    consoleErrorBorder: '#f6d5d5',
+   }),
++  // Chrome DevTools "Dark" palette.
+   Dark: createDarkTheme({
+-    darkerBackground: '#333',
+-    background: '#242424',
+-    foreground: '#a5a5a5',
+-    selectForeground: '#eaeaea',
+-    accent: '#7cacf8',
+-    highlight: '#000',
+-    border: '#3d3d3d',
+-    primary: '#ccc',
+-    contrast: '#0b2544',
+-    varColor: '#e36eec',
+-    stringColor: '#f29766',
+-    keywordColor: '#9980ff',
+-    numberColor: '#9980ff',
+-    operatorColor: '#7f7f7f',
+-    linkColor: '#ababab',
+-    textColor: '#42597f',
++    darkerBackground: '#292a2d',
++    background: '#202124',
++    foreground: '#e8eaed',
++    selectForeground: '#e8eaed',
++    accent: '#8ab4f8',
++    highlight: '#3c4043',
++    border: '#3c4043',
++    primary: '#e8eaed',
++    contrast: '#2b2c2f',
++    varColor: '#7fb7ff',
++    stringColor: '#81c995',
++    keywordColor: '#c58af9',
++    numberColor: '#7ba7ff',
++    operatorColor: '#9aa0a6',
++    linkColor: '#8ab4f8',
++    textColor: '#9aa0a6',
+     tagNameColor: '#5db0d7',
+     functionColor: '#d5d5d5',
+-    attributeNameColor: '#9bbbdc',
+-    commentColor: '#747474',
++    attributeNameColor: '#75b7ff',
++    commentColor: '#898989',
++    consoleWarnBackground: '#332a00',
++    consoleWarnForeground: '#fdd663',
++    consoleWarnBorder: '#665500',
++    consoleErrorBackground: '#3a1d1f',
++    consoleErrorForeground: '#f28b82',
++    consoleErrorBorder: '#5c2b2d',
+   }),
+   'Material Oceanic': createDarkTheme([
+     '#263238', '#B0BEC5', '#FFFFFF', '#009688', '#425B67',
+diff --git a/src/lib/util.js b/src/lib/util.js
+old mode 100644
+new mode 100755
+index e9e280a..b700759
+--- a/src/lib/util.js
++++ b/src/lib/util.js
+@@ -170,3 +170,78 @@ export function eventPage(type, e) {
+ 
+   return 0
+ }
++
++// ---- Preserve Log helpers (shared by Console & Network) ----
++
++export function safeStringify(val, maxLen = 2000, depth = 0) {
++  try {
++    if (isUndef(val)) return 'undefined'
++    if (val === null) return 'null'
++    const t = typeof val
++    if (t === 'string') return val
++    if (t === 'number' || t === 'boolean') return String(val)
++    if (t === 'function') {
++      const name = val.name ? `: ${val.name}` : ''
++      return `[Function${name}]`
++    }
++    if (t === 'symbol') return val.toString()
++    if (val instanceof Error) return `${val.name}: ${val.message}`
++    if (val instanceof Element) {
++      return val.tagName ? `<${val.tagName.toLowerCase()}>` : '[Element]'
++    }
++    if (depth > 3) return '[Depth limit]'
++    if (Array.isArray(val)) {
++      return `[${val
++        .slice(0, 20)
++        .map((v) => safeStringify(v, maxLen, depth + 1))
++        .join(', ')}]`
++    }
++    const obj = val
++    const keys = []
++    for (const k in obj) {
++      if (keys.length >= 20) break
++      keys.push(k)
++    }
++    const body = keys
++      .map((k) => {
++        let v
++        try {
++          v = obj[k]
++        } catch {
++          v = '[unaccessible]'
++        }
++        return `${k}: ${safeStringify(v, maxLen, depth + 1)}`
++      })
++      .join(', ')
++    const ctor = obj.constructor && obj.constructor.name
++    const prefix = ctor && ctor !== 'Object' ? `${ctor} ` : ''
++    return `${prefix}{${body}}`
++  } catch {
++    return '[Unserializable]'
++  }
++}
++
++const PRESERVE_MAX = 300 * 1024
++
++export function savePreservedLogs(key, data) {
++  try {
++    const store = safeStorage('session', true)
++    const json = JSON.stringify(data)
++    if (json.length > PRESERVE_MAX) return
++    store.setItem(`eruda-preserved-${key}`, json)
++  } catch {
++    // Ignore quota errors
++  }
++}
++
++export function loadPreservedLogs(key) {
++  try {
++    const store = safeStorage('session', true)
++    const json = store.getItem(`eruda-preserved-${key}`)
++    if (!json) return null
++    store.removeItem(`eruda-preserved-${key}`)
++    return JSON.parse(json)
++  } catch {
++    return null
++  }
++}
+diff --git a/src/polyfill.js b/src/polyfill.js
+old mode 100644
+new mode 100755
+diff --git a/src/style/icon.css b/src/style/icon.css
+old mode 100644
+new mode 100755
+diff --git a/src/style/icon.json b/src/style/icon.json
+old mode 100644
+new mode 100755
+diff --git a/src/style/luna.scss b/src/style/luna.scss
+old mode 100644
+new mode 100755
+index 9cdaebe..a643db4
+--- a/src/style/luna.scss
++++ b/src/style/luna.scss
+@@ -335,9 +335,15 @@
+   }
+ 
+   .luna-tab-item {
+-    &.luna-tab-selected,
++    font-size: 13px;
++    letter-spacing: 0.2px;
++    &.luna-tab-selected {
++      background: var(--contrast);
++      color: var(--accent);
++      font-weight: 500;
++      box-shadow: inset 0 2px 0 var(--accent);
++    }
+     &:hover {
+-      background: var(--highlight);
+       color: var(--select-foreground);
+     }
+   }
+@@ -466,4 +472,48 @@
+     color: var(--foreground);
+     background: var(--background);
+   }
++
++  // ---- Chrome DevTools look & feel ----
++
++  // Thin DevTools-style scrollbars.
++  ::-webkit-scrollbar {
++    width: 8px;
++    height: 8px;
++  }
++  ::-webkit-scrollbar-track {
++    background: transparent;
++  }
++  ::-webkit-scrollbar-thumb {
++    background: var(--border);
++    &:hover {
++      background: var(--text-color);
++    }
++    border-radius: 0;
++  }
++
++  // Data tables use a monospace face, like DevTools.
++  .luna-data-grid td,
++  .luna-data-grid th {
++    font-family: $font-family-mono;
++    font-size: $font-size-s;
++    text-align: left;
++  }
++
++  // Flat DevTools-style dialog.
++  .luna-modal-body {
++    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
++    border-radius: 4px;
++    overflow: hidden;
++  }
++
++  .luna-notification-item {
++    border-radius: 2px;
++    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
++    font-size: $font-size;
++  }
++
++  .luna-text-viewer-line-number {
++    color: var(--text-color);
++    user-select: none;
++  }
+ }
+diff --git a/src/style/mixin.scss b/src/style/mixin.scss
+old mode 100644
+new mode 100755
+diff --git a/src/style/reset.scss b/src/style/reset.scss
+old mode 100644
+new mode 100755
+diff --git a/src/style/style.scss b/src/style/style.scss
+old mode 100644
+new mode 100755
+diff --git a/src/style/variable.scss b/src/style/variable.scss
+old mode 100644
+new mode 100755
+index 29fce9c..93be088
+--- a/src/style/variable.scss
++++ b/src/style/variable.scss
+@@ -1,11 +1,15 @@
+ $padding: 10px;
+ 
+-$font-size: 14px;
++$font-size: 13px;
+ $font-size-s: 12px;
+ $font-size-l: 16px;
+ 
+-$font-family: -apple-system, system-ui, BlinkMacSystemFont,
+-  '.SFNSDisplay-Regular', 'Helvetica Neue', 'Lucida Grande', 'Segoe UI', Tahoma,
+-  sans-serif;
++// Chrome DevTools-like UI font stack.
++$font-family: 'Google Sans', Roboto, -apple-system, system-ui,
++  BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', 'PingFang SC',
++  'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+ 
+-$anim-duration: 0.3s;
++$font-family-mono: 'Roboto Mono', 'SF Mono', Menlo, Consolas,
++  'Liberation Mono', monospace;
++
++$anim-duration: 0.15s;
