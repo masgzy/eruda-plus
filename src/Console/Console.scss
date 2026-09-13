@@ -6,8 +6,14 @@
   padding-bottom: 24px;
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
   &.js-input-hidden {
     padding-bottom: 0;
+  }
+  .logs-container {
+    flex: 1;
+    min-height: 0;
   }
   .control {
     padding: 10px 10px 10px 35px;
@@ -40,11 +46,149 @@
       white-space: nowrap;
       position: absolute;
       line-height: 20px;
-      max-width: 80px;
+      max-width: 60px;
       overflow: hidden;
-      right: 55px;
+      right: 78px;
       font-size: $font-size;
       text-overflow: ellipsis;
+    }
+    .icon-eye {
+      right: 46px;
+    }
+  }
+  .filter-row {
+    display: none;
+    align-items: center;
+    height: 30px;
+    padding: 0 10px;
+    background: var(--darker-background);
+    border-bottom: 1px solid var(--border);
+    .icon-filter {
+      font-size: $font-size-l;
+      color: var(--accent);
+      margin-right: 8px;
+      flex: none;
+    }
+    &.active {
+      display: flex;
+    }
+    input {
+      flex: 1;
+      height: 22px;
+      border: none;
+      outline: none;
+      background: var(--background);
+      color: var(--primary);
+      font-size: $font-size;
+      padding: 0 8px;
+      border-radius: 3px;
+      user-select: text;
+      font-family: $font-family;
+    }
+  }
+  .watch-panel {
+    display: none;
+    background: var(--darker-background);
+    border-bottom: 1px solid var(--border);
+    max-height: 150px;
+    overflow: auto;
+    font-size: $font-size;
+    &.active {
+      display: block;
+    }
+    .watch-row {
+      display: flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-top: 1px solid var(--border);
+      &:first-child {
+        border-top: none;
+      }
+      .watch-expr {
+        flex: none;
+        max-width: 45%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--accent);
+      }
+      .watch-val {
+        flex: 1;
+        min-width: 0;
+        margin-left: 8px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--primary);
+        font-family: $font-family-mono;
+        font-size: $font-size-s;
+        cursor: pointer;
+        user-select: text;
+        &.watch-err {
+          color: var(--console-error-foreground);
+        }
+      }
+      .icon-delete {
+        flex: none;
+        padding: 4px;
+        font-size: $font-size;
+        cursor: pointer;
+        color: var(--primary);
+        opacity: 0.6;
+      }
+    }
+    .watch-add-row {
+      display: flex;
+      align-items: center;
+      padding: 3px 10px;
+      border-top: 1px solid var(--border);
+      .watch-plus {
+        color: var(--accent);
+        font-weight: bold;
+        margin-right: 8px;
+        flex: none;
+      }
+      input {
+        flex: 1;
+        height: 22px;
+        border: none;
+        outline: none;
+        background: var(--background);
+        color: var(--primary);
+        font-size: $font-size;
+        padding: 0 8px;
+        border-radius: 3px;
+        user-select: text;
+        font-family: $font-family;
+      }
+    }
+  }
+  .restored-divider {
+    padding: 3px 10px;
+    color: var(--foreground);
+    font-style: italic;
+    font-size: $font-size-s;
+    border-bottom: 1px dashed var(--border);
+    opacity: 0.8;
+  }
+  .restored-log {
+    padding: 2px 10px;
+    font-family: $font-family-mono;
+    font-size: $font-size-s;
+    color: var(--foreground);
+    word-break: break-all;
+    opacity: 0.75;
+    .restored-time {
+      margin-right: 8px;
+      opacity: 0.7;
+    }
+    &.restored-error {
+      color: var(--console-error-foreground);
+      opacity: 1;
+    }
+    &.restored-warning {
+      color: var(--console-warn-foreground);
+      opacity: 1;
     }
   }
   .js-input {
