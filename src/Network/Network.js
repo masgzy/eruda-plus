@@ -39,7 +39,61 @@ import {
 
 const SETTINGS_KEY = 'eruda_network_settings'
 
-const CHIPS = ['all', 'xhr', 'js', 'css', 'img', 'media', 'font', 'doc', 'other']
+// Aligned with Chrome DevTools request filter chips.
+const CHIPS = [
+  'all',
+  'xhr',
+  'doc',
+  'css',
+  'js',
+  'font',
+  'img',
+  'media',
+  'manifest',
+  'ws',
+  'wasm',
+  'other',
+]
+
+// DevTools-style status cell: paint the number, not the whole row.
+function statusCell(request) {
+  const span = document.createElement('span')
+  let txt = request.displayStatus || request.status || ''
+  let cls = 'st-pending'
+  if (request.blocked || request.status === 'blocked') {
+    // Like DevTools' "(blocked:blocked-by-client)" — show the synthetic 403.
+    cls = 'st-blocked'
+    txt = '403'
+  } else if (request.mock) {
+    cls = 'st-mock'
+  } else if (request.status === 0) {
+    cls = 'st-0'
+  } else if (typeof request.status === 'number') {
+    if (request.status >= 500) cls = 'st-5xx'
+    else if (request.status >= 400) cls = 'st-4xx'
+    else if (request.status >= 300) cls = 'st-3xx'
+    else if (request.status >= 200) cls = 'st-2xx'
+    else if (request.status > 0) cls = 'st-2xx'
+  } else if (request.status === 'pending') {
+    cls = 'st-pending'
+  } else {
+    cls = 'st-pending'
+  }
+  span.className = c('st-badge') + ' ' + c(cls)
+  span.textContent = String(txt)
+  return span
+}
+
+// Colored HTTP method so it stays readable on narrow screens.
+function methodCell(request) {
+  const span = document.createElement('span')
+  const m = String(request.method || 'GET').toLowerCase()
+  const known = ['get', 'post', 'put', 'delete', 'patch']
+  const cls = known.indexOf(m) >= 0 ? 'm-' + m : 'm-get'
+  span.className = c('method-badge') + ' ' + c(cls)
+  span.textContent = request.method || 'GET'
+  return span
+}
 
 export default class Network extends Tool {
   constructor() {
@@ -86,6 +140,8 @@ export default class Network extends Tool {
     this._detail = new Detail(this._$detail, container)
     this._splitMediaQuery = new MediaQuery('screen and (min-width: 680px)')
     this._splitMode = this._splitMediaQuery.isMatch()
+    this._compactMediaQuery = new MediaQuery('screen and (max-width: 479px)')
+    this._compactMode = this._compactMediaQuery.isMatch()
     this._requestDataGrid = new LunaDataGrid(this._$requests.get(0), {
       columns: this._gridColumns(),
     })
@@ -95,6 +151,7 @@ export default class Network extends Tool {
     this._bindEvent()
     this._updateStats()
     this._renderChips()
+    this._updateEmptyState()
 
     if (this._preserveLog) {
       window.addEventListener('pagehide', this._saveNetworkPreserved)
@@ -111,6 +168,7 @@ export default class Network extends Tool {
     this._requestDataGrid.clear()
     this._updateStats()
     this._drawOverview()
+    this._updateEmptyState()
   }
   requests() {
     const ret = []
@@ -123,6 +181,18 @@ export default class Network extends Tool {
     this._requestDataGrid.fit()
   }
   _gridColumns() {
+    // Narrow screens drop the secondary columns (Type / Initiator) so
+    // Name / Method / Status stay readable — the main mobile pain point.
+    if (this._compactMode) {
+      return [
+        { id: 'name', title: t('Name'), sortable: true, weight: 34 },
+        { id: 'method', title: t('Method'), sortable: true, weight: 12 },
+        { id: 'status', title: t('Status'), sortable: true, weight: 10 },
+        { id: 'size', title: t('Size'), sortable: true, weight: 11 },
+        { id: 'time', title: t('Time'), sortable: true, weight: 11 },
+        { id: 'waterfall', title: t('Waterfall'), sortable: false, weight: 22 },
+      ]
+    }
     return [
       { id: 'name', title: t('Name'), sortable: true, weight: 30 },
       { id: 'method', title: t('Method'), sortable: true, weight: 10 },
@@ -133,6 +203,22 @@ export default class Network extends Tool {
       { id: 'time', title: t('Time'), sortable: true, weight: 10 },
       { id: 'waterfall', title: t('Waterfall'), sortable: false, weight: 16 },
     ]
+  }
+  _gridRowData(id, request) {
+    const row = {
+      id,
+      name: request.name,
+      method: methodCell(request),
+      status: statusCell(request),
+      size: request.size,
+      time: request.displayTime,
+      waterfall: this._waterfallCell(request),
+    }
+    if (!this._compactMode) {
+      row.type = request.subType
+      row.initiator = initiatorLabel(request.initiator)
+    }
+    return row
   }
 
   // Build the mini waterfall cell (DevTools NetworkWaterfallColumn style).
@@ -187,6 +273,22 @@ export default class Network extends Tool {
       $preserveLabel.attr('title', t('Preserve Log'))
       $preserveLabel.find('span').text(t('Preserve Log'))
     }
+    this._updateEmptyState()
+  }
+
+  // DevTools-style empty state below the stats bar.
+  _updateEmptyState() {
+    if (!this._$empty) return
+    const empty = Object.keys(this._requests).length === 0
+    this._$empty.css('display', empty ? 'flex' : 'none')
+    if (empty) {
+      this._$empty.find(c('.np-empty-title')).text(t('currentlyRecording'))
+      this._$empty.find(c('.np-empty-hint')).text(t('recordingHint'))
+      this._$empty.find(c('.np-empty-btn')).text(t('reloadPage'))
+    }
+  }
+  _reloadPage = () => {
+    location.reload()
   }
   _loadSettings() {
     try {
@@ -273,17 +375,7 @@ export default class Network extends Tool {
       const id = record.id
       const request = extend({ fromSession: true }, record)
       request.render = () => {
-        const gridData = {
-          id,
-          name: request.name,
-          method: request.method,
-          status: request.displayStatus || request.status,
-          type: request.subType,
-          initiator: initiatorLabel(request.initiator),
-          size: request.size,
-          time: request.displayTime,
-          waterfall: this._waterfallCell(request),
-        }
+        const gridData = this._gridRowData(id, request)
         if (request._gridNode) {
           request._gridNode.data = gridData
           request._gridNode.render()
@@ -298,6 +390,7 @@ export default class Network extends Tool {
     })
     this._updateStats()
     this._drawOverview()
+    this._updateEmptyState()
   }
 
   // ---------- rules ----------
@@ -655,17 +748,7 @@ export default class Network extends Tool {
       resHeaders,
     }
     request.render = () => {
-      const data = {
-        id,
-        name: request.name,
-        method: request.method,
-        status: request.displayStatus || request.status,
-        type: request.subType,
-        initiator: initiatorLabel(request.initiator),
-        size: request.size,
-        time: request.displayTime,
-        waterfall: this._waterfallCell(request),
-      }
+      const data = this._gridRowData(id, request)
       if (request._gridNode) {
         request._gridNode.data = data
         request._gridNode.render()
@@ -679,6 +762,7 @@ export default class Network extends Tool {
     this._requests[id] = request
     this._updateStats()
     this._drawOverview()
+    this._updateEmptyState()
   }
 
   // ---------- chobitsu events ----------
@@ -707,17 +791,7 @@ export default class Network extends Tool {
       resHeaders: {},
     }
     request.render = () => {
-      const data = {
-        id: params.requestId,
-        name: request.name,
-        method: request.method,
-        status: request.status,
-        type: request.subType,
-        initiator: initiatorLabel(request.initiator),
-        size: request.size,
-        time: request.displayTime,
-        waterfall: this._waterfallCell(request),
-      }
+      const data = this._gridRowData(params.requestId, request)
       if (request._gridNode) {
         request._gridNode.data = data
         request._gridNode.render()
@@ -731,6 +805,7 @@ export default class Network extends Tool {
     this._requests[params.requestId] = request
     this._updateStats()
     this._drawOverview()
+    this._updateEmptyState()
   }
   _updateRowClass(node, request) {
     const $node = $(node.container)
@@ -1025,16 +1100,7 @@ export default class Network extends Tool {
         each(records, (record) => {
           const id = record.id
           record.render = () => {
-            const data = {
-              id,
-              name: record.name,
-              method: record.method,
-              status: record.status,
-              type: record.subType,
-              initiator: initiatorLabel(record.initiator),
-              size: record.size,
-              time: record.displayTime,
-            }
+            const data = self._gridRowData(id, record)
             if (record._gridNode) {
               record._gridNode.data = data
               record._gridNode.render()
@@ -1091,27 +1157,52 @@ export default class Network extends Tool {
     this._wfRange = { t0, span }
     this._updateWaterfallBars()
 
-    // Same constants as Chrome DevTools NetworkOverview.js:
-    // 3px bands, 5px top padding and a 10px minimum band width.
+    // Chrome DevTools NetworkOverview: each request renders as a thin band
+    // painted with its actual timing segments (queueing / dns / connect /
+    // ssl / wait / download), failing requests in red.
     const BAND_HEIGHT = 3
     const PADDING = 5
     const numBands = Math.max((((h - PADDING - 1) / BAND_HEIGHT) - 1) | 0, 1)
     const bandH = h / numBands
-    ctx.globalAlpha = 0.9
+    const SEG_COLORS = {
+      queueing: '#c9cdd4',
+      dns: '#12b5cb',
+      connect: '#f9ab00',
+      ssl: '#a142f4',
+      sent: '#7baaf7',
+      wait: '#1e8e3e',
+      download: '#1a73e8',
+    }
+    ctx.globalAlpha = 0.95
     each(rows, (r, i) => {
-      const x = ((r.startTime - t0) / span) * w
-      const x2 = ((r.startTime + (r.time || 0) - t0) / span) * w
-      const wpx = Math.max(x2 - x, 2)
       const y = (i % numBands) * bandH + 1
-      // Mid tones that stay readable on both light and dark themes.
-      let color = 'rgba(95,99,104,0.9)'
-      if (r.blocked || r.status === 0 || (typeof r.status === 'number' && r.status >= 400))
-        color = 'rgba(217,48,37,0.9)'
-      else if (r.mock) color = 'rgba(11,87,208,0.9)'
-      else if (typeof r.status === 'number' && r.status >= 300) color = 'rgba(230,145,56,0.95)'
-      else if (r.status === 'pending') color = 'rgba(154,160,166,0.7)'
-      ctx.fillStyle = color
-      ctx.fillRect(x, y, wpx, Math.max(bandH - 2, 2))
+      const bh = Math.max(bandH - 2, 2)
+      const failed = r.blocked || r.status === 0 || (typeof r.status === 'number' && r.status >= 400)
+      if (failed) {
+        const x = ((r.startTime - t0) / span) * w
+        ctx.fillStyle = '#d93025'
+        ctx.fillRect(x, y, Math.max(((r.time || 20) / span) * w, 2), bh)
+        return
+      }
+      const timing = getTimingSegments(r)
+      const total = timing.total || r.time || 0
+      if (!(total > 0)) {
+        // Pending request: gray dot at its start position.
+        const x = ((r.startTime - t0) / span) * w
+        ctx.fillStyle = 'rgba(154,160,166,0.7)'
+        ctx.fillRect(x, y, 2, bh)
+        return
+      }
+      each(timing.segments, (seg) => {
+        if (!(seg.to > seg.from)) return
+        // Map segments onto the request's wall-clock span.
+        const baseX = (r.startTime - t0) / span * w
+        const spanW = ((r.time || total) / span) * w
+        const sx = baseX + (seg.from / total) * spanW
+        const sw = Math.max(((seg.to - seg.from) / total) * spanW, 1)
+        ctx.fillStyle = SEG_COLORS[seg.cls] || '#9aa0a6'
+        ctx.fillRect(sx, y, sw, bh)
+      })
     })
     ctx.globalAlpha = 1
   }
@@ -1286,6 +1377,8 @@ export default class Network extends Tool {
       self._applyGridFilter()
     })
 
+    this._$empty.on('click', c('.np-empty-btn'), this._reloadPage)
+
     this._$search.on('input', this._onSearchInput)
 
     const $preserve = this._$network.find(c('.preserve-log'))
@@ -1400,6 +1493,16 @@ export default class Network extends Tool {
       this._detail.hide()
       this._splitMode = false
     })
+    const onCompactChange = () => {
+      const compact = this._compactMediaQuery.isMatch()
+      if (compact === this._compactMode) return
+      this._compactMode = compact
+      this._requestDataGrid.setOption('columns', this._gridColumns())
+      // Re-render all rows so removed/added columns get their data back.
+      this._applyGridFilter()
+    }
+    this._compactMediaQuery.on('match', onCompactChange)
+    this._compactMediaQuery.on('unmatch', onCompactChange)
     this._detail.on('hide', () => {
       if (this._splitMode) {
         this._$network.css('width', '100%')
@@ -1476,6 +1579,11 @@ export default class Network extends Tool {
           <span class="stat stat-failed"></span>
           <span class="filter-text"></span>
         </div>
+        <div class="np-empty">
+          <div class="np-empty-title"></div>
+          <div class="np-empty-hint"></div>
+          <button class="np-empty-btn"></button>
+        </div>
         <div class="requests"></div>
         <div class="rules-panel"></div>
         <input type="file" class="file-input" accept=".har,application/json">
@@ -1496,6 +1604,7 @@ export default class Network extends Tool {
     this._$statSize = $el.find(c('.stat-size'))
     this._$statTime = $el.find(c('.stat-time'))
     this._$statFailed = $el.find(c('.stat-failed'))
+    this._$empty = $el.find(c('.np-empty'))
     this._$rulesPanel = $el.find(c('.rules-panel'))
     this._$control.find(c('.throttle')).val(this._throttleKey)
   }

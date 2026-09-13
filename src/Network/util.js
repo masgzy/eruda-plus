@@ -508,6 +508,10 @@ export function classifyChip(r) {
   const contentTypeHeader = resHeaders.find((h) => h.name.toLowerCase() === 'content-type')
   const ct = contentTypeHeader ? contentTypeHeader.value.toLowerCase() : ''
   const url = String(r.url || '').toLowerCase()
+  // WebSocket / Wasm / Web manifest (same groups as DevTools chips).
+  if (r.subType === 'websocket' || ct.includes('websocket') || /^(ws|wss):/.test(url)) return 'ws'
+  if (ct.includes('wasm') || /\.wasm([?#]|$)/.test(url)) return 'wasm'
+  if (ct.includes('manifest') || /manifest\.(json|webmanifest)([?#]|$)/.test(url)) return 'manifest'
   if (ct.includes('image/') || /\.(png|jpe?g|gif|webp|svg|ico|bmp)([?#]|$)/.test(url)) return 'img'
   if (ct.includes('video/') || ct.includes('audio/') || /\.(mp4|webm|mp3|wav|ogg|m4a)([?#]|$)/.test(url))
     return 'media'

@@ -43,7 +43,7 @@ $status-mock: #1a73e8;
       }
     }
     .throttle {
-      max-width: 96px;
+      max-width: 110px;
       background: transparent;
       color: var(--foreground);
       border: 1px solid var(--border);
@@ -123,18 +123,21 @@ $status-mock: #1a73e8;
       }
     }
     .chip {
-      padding: 2px 8px;
+      padding: 2px 9px;
       border-radius: 999px;
       font-size: 12px;
       background: transparent;
-      color: var(--text-color);
+      color: var(--primary);
+      border: 1px solid var(--border);
       cursor: pointer;
       white-space: nowrap;
       flex: none;
       user-select: none;
+      line-height: 16px;
       &.chip-on {
         background: var(--highlight);
         color: var(--accent);
+        border-color: transparent;
         font-weight: 500;
       }
     }
@@ -238,10 +241,95 @@ $status-mock: #1a73e8;
     opacity: 0.55;
   }
 
+  // Status cell coloring (DevTools paints the number, not the whole row).
+  .st-badge {
+    display: inline-block;
+    min-width: 22px;
+  }
+  .st-2xx {
+    color: $status-ok;
+  }
+  .st-3xx {
+    color: $status-warn;
+  }
+  .st-4xx,
+  .st-5xx,
+  .st-0 {
+    color: var(--console-error-foreground);
+  }
+  .st-pending {
+    color: var(--primary);
+    opacity: 0.55;
+  }
+  .st-mock {
+    color: $status-mock;
+  }
+  .st-blocked {
+    color: var(--console-error-foreground);
+    opacity: 0.8;
+  }
+
+  // HTTP method coloring for at-a-glance readability on narrow screens.
+  .method-badge {
+    font-weight: 500;
+    letter-spacing: 0.2px;
+  }
+  .m-get {
+    color: var(--accent);
+  }
+  .m-post {
+    color: $status-ok;
+  }
+  .m-put {
+    color: $status-warn;
+  }
+  .m-delete {
+    color: var(--console-error-foreground);
+  }
+  .m-patch {
+    color: #a142f4;
+  }
+
+  // DevTools-style empty state ("Currently recording network activity").
+  .np-empty {
+    @include absolute(100%, 120px);
+    top: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 20px;
+    color: var(--primary);
+    z-index: 4;
+    .np-empty-title {
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+    .np-empty-hint {
+      font-size: 12px;
+      opacity: 0.7;
+      line-height: 1.6;
+      max-width: 300px;
+    }
+    .np-empty-btn {
+      margin-top: 14px;
+      background: var(--highlight);
+      color: var(--accent);
+      border: none;
+      border-radius: 999px;
+      padding: 7px 20px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+      &:active {
+        opacity: 0.85;
+      }
+    }
+  }
+
   // Data grid density and column separators aligned with Chrome DevTools
-  // networkLogView.css (27px header, 21px rows, 1px column rules).
-  // NOTE: rules target .luna-data-grid-node td so the grid's own filler
-  // rows keep height:auto and absorb the leftover space.
+  // networkLogView.css (27px header, 24px rows for touch, 1px column rules).
   .luna-data-grid {
     border-left: none;
     border-right: none;
@@ -257,13 +345,15 @@ $status-mock: #1a73e8;
     }
     .luna-data-grid-node {
       td {
-        height: 21px;
+        height: 24px;
         padding: 0 8px;
         font-size: $font-size-s;
         border-left: 1px solid var(--border);
         vertical-align: middle;
         &:first-child {
           border-left: none;
+          // DevTools renders the request name in a monospace font.
+          font-family: Menlo, Consolas, Monaco, monospace;
         }
       }
     }
@@ -517,73 +607,49 @@ $status-mock: #1a73e8;
     @include absolute();
     z-index: 10;
     display: none;
-    padding-top: 40px;
+    padding-top: 36px;
     background: var(--background);
-    .control {
-      padding: 10px 113px 10px 35px;
-      border-bottom: 1px solid var(--border);
-      .url {
-        font-size: $font-size-s;
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        width: 100%;
-        display: inline-block;
-      }
-      .icon-left {
-        left: 0;
-      }
-      .icon-delete {
-        left: 0;
-        display: none;
-      }
-      .icon-copy {
-        right: 0;
-      }
-      .copy-fetch {
-        right: 69px;
-        padding: 10px;
-        font-size: $font-size;
-        position: absolute;
-        top: 0;
-        cursor: pointer;
-        font-family: Menlo, Consolas, Monaco, monospace;
-        font-weight: bold;
-        &:active {
-          color: var(--accent);
-        }
-      }
-      .icon-curl {
-        right: 92px;
-      }
-      .icon-play {
-        right: 115px;
-      }
-      .icon-curl:before {
-        content: '';
-        display: block;
-        width: 16px;
-        height: 16px;
-        background-color: currentColor;
-        -webkit-mask: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M4 7l5 5-5 5" /%3E%3Cpath d="M12 17h8" /%3E%3C/svg%3E') no-repeat center / contain;
-        mask: url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M4 7l5 5-5 5" /%3E%3Cpath d="M12 17h8" /%3E%3C/svg%3E') no-repeat center / contain;
-      }
-    }
     .tabs {
+      @include absolute(100%, 36px);
+      top: 0;
       display: flex;
-      height: 30px;
+      align-items: center;
+      height: 36px;
+      padding: 0 6px;
       border-bottom: 1px solid var(--border);
       background: var(--background);
-      @include overflow-auto(x);
+      .dt-close {
+        flex: none;
+        width: 26px;
+        height: 26px;
+        line-height: 26px;
+        text-align: center;
+        font-size: 14px;
+        color: var(--primary);
+        cursor: pointer;
+        border-radius: 50%;
+        &:active {
+          background: var(--highlight);
+        }
+      }
+      .dt-tabs {
+        display: flex;
+        @include overflow-auto(x);
+        scrollbar-width: none;
+        &::-webkit-scrollbar {
+          display: none;
+        }
+      }
       .tab {
-        flex: 1;
+        flex: none;
         min-width: 52px;
         text-align: center;
-        line-height: 30px;
+        line-height: 36px;
         font-size: $font-size-s;
         color: var(--primary);
         cursor: pointer;
         border-bottom: 2px solid transparent;
+        padding: 0 6px;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: ellipsis;
@@ -592,10 +658,56 @@ $status-mock: #1a73e8;
           border-bottom-color: var(--accent);
         }
       }
+      [class^='eruda-icon-'],
+      [class*=' icon-'] {
+        position: static;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        margin: 0 1px;
+        font-size: $font-size-l;
+        flex: none;
+      }
+      .copy-fetch {
+        font-family: Menlo, Consolas, Monaco, monospace;
+        font-weight: bold;
+        font-size: $font-size;
+        flex: none;
+        width: 28px;
+        text-align: center;
+        cursor: pointer;
+      }
+      .replay,
+      .copy-curl,
+      .copy-res {
+        cursor: pointer;
+      }
     }
     .tab-content {
       @include overflow-auto(y);
-      height: calc(100% - 30px);
+      height: 100%;
+    }
+    // Yellow "Provisional headers are shown" banner (DevTools style).
+    .provisional {
+      margin: 10px;
+      padding: 10px 12px;
+      border-left: 3px solid #f9ab00;
+      background: var(--console-warn-background);
+      color: var(--console-warn-foreground);
+      font-size: 12px;
+      line-height: 1.6;
+      border-radius: 2px;
+      .prov-icon {
+        margin-right: 6px;
+      }
+      .prov-link {
+        color: var(--accent);
+        text-decoration: underline;
+        margin-left: 4px;
+      }
     }
     .section {
       border-top: 1px solid var(--border);
@@ -651,28 +763,55 @@ $status-mock: #1a73e8;
           padding: 5px 10px;
           word-break: break-all;
           vertical-align: top;
+          line-height: 1.6;
         }
         .key {
           white-space: nowrap;
-          font-weight: bold;
-          color: var(--accent);
+          color: var(--primary);
           width: 1%;
+          padding-right: 24px;
+          opacity: 0.75;
         }
-        .st-ok {
-          color: $status-ok;
-          font-weight: bold;
+        // DevTools paints a green dot before a successful status code.
+        .st-ok::before {
+          content: '';
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: $status-ok;
+          margin-right: 6px;
+          vertical-align: middle;
         }
-        .st-warn {
-          color: $status-warn;
-          font-weight: bold;
+        .st-warn::before {
+          content: '';
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: $status-warn;
+          margin-right: 6px;
+          vertical-align: middle;
         }
-        .st-err {
-          color: $status-err;
-          font-weight: bold;
+        .st-err::before {
+          content: '';
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: $status-err;
+          margin-right: 6px;
+          vertical-align: middle;
         }
-        .st-mock {
-          color: $status-mock;
-          font-weight: bold;
+        .st-mock::before {
+          content: '';
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: $status-mock;
+          margin-right: 6px;
+          vertical-align: middle;
         }
       }
     }
@@ -788,6 +927,20 @@ $status-mock: #1a73e8;
     }
     .timing {
       padding: 10px 0;
+      .timing-group {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 10px 2px;
+        font-size: $font-size-s;
+        color: var(--primary);
+        opacity: 0.75;
+        .tg-dur {
+          font-size: 10px;
+          letter-spacing: 0.5px;
+          opacity: 0.8;
+        }
+      }
       .timing-row {
         display: flex;
         align-items: center;
@@ -811,26 +964,27 @@ $status-mock: #1a73e8;
           height: 10px;
           border-radius: 2px;
           min-width: 2px;
+          // DevTools NetworkTimingColumn palette.
           &.queueing {
-            background: #9aa0b3;
+            background: #c9cdd4;
           }
           &.dns {
-            background: #35a853;
+            background: #12b5cb;
           }
           &.connect {
-            background: #f5a623;
+            background: #f9ab00;
           }
           &.ssl {
-            background: #c77700;
+            background: #a142f4;
           }
           &.sent {
-            background: #4a90d9;
+            background: #7baaf7;
           }
           &.wait {
-            background: #7bc96f;
+            background: #1e8e3e;
           }
           &.download {
-            background: #2e7ed4;
+            background: #1a73e8;
           }
           &.total {
             background: var(--accent);
@@ -883,14 +1037,6 @@ $status-mock: #1a73e8;
       left: initial;
       right: 0;
       border-left: 1px solid var(--border);
-      .control {
-        .icon-left {
-          display: none;
-        }
-        .icon-delete {
-          display: block;
-        }
-      }
     }
   }
 }

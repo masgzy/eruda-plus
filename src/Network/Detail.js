@@ -67,22 +67,22 @@ export default class Detail extends Emitter {
     this.emit('hide')
   }
   _render() {
-    const data = this._request
     const tabsHtml = map(TABS, (tab) => {
       const active = tab.id === this._activeTab ? c('active') : ''
       return `<div class="${c('tab')} ${active}" data-tab="${tab.id}">${t(tab.key)}</div>`
     }).join('')
 
-    const html = `<div class="${c('control')}">
-      <span class="${c('icon-left back')}"></span>
-      <span class="${c('icon-delete back')}"></span>
-      <span class="${c('url')}">${escape(data.method)} ${escape(data.url)}</span>
+    // DevTools-style single-row header: close button, detail tabs, then
+    // the request actions on the right. The URL itself lives in the
+    // Headers tab's General section (Request URL row), like real DevTools.
+    const html = `<div class="${c('tabs')}">
+      <span class="${c('dt-close')}" data-tab="close">✕</span>
+      <div class="${c('dt-tabs')}" style="flex:1;overflow-x:auto">${tabsHtml}</div>
       <span class="${c('icon-play replay')}" title="${t('replay')}"></span>
       <span class="${c('icon-curl copy-curl')}" title="${t('copyCurl')}"></span>
       <span class="${c('copy-fetch')}" title="${t('copyFetch')}">{ }</span>
       <span class="${c('icon-copy copy-res')}" title="${t('copyResponse')}"></span>
     </div>
-    <div class="${c('tabs')}">${tabsHtml}</div>
     <div class="${c('tab-content')}"></div>`
 
     this._$container.html(html)
@@ -157,8 +157,11 @@ export default class Detail extends Emitter {
   _generalRows(data) {
     const rows = [
       { name: t('Request URL'), value: data.url },
-      { name: t('Request Method'), value: data.method },
     ]
+    if (data.originalUrl && data.originalUrl !== data.url) {
+      rows.push({ name: t('originalUrl'), value: data.originalUrl })
+    }
+    rows.push({ name: t('Request Method'), value: data.method })
     let statusVal
     let cls = 'st-ok'
     if (data.status === 'blocked') {
@@ -189,6 +192,19 @@ export default class Detail extends Emitter {
     const queryParams = parseQueryParams(data.url)
 
     let html = this._section(t('general'), general)
+
+    // DevTools shows a yellow "Provisional headers are shown" banner when
+    // real request headers are unavailable (resource requests not hooked).
+    if (
+      isEmpty(reqHeaders) &&
+      !data.blocked &&
+      !data.mock &&
+      data.status !== 'blocked' &&
+      data.status !== 'pending'
+    ) {
+      html += `<div class="${c('provisional')}"><span class="${c('prov-icon')}">⚠</span>${t('provisionalHeaders')} <a class="${c('prov-link')}" href="https://developer.chrome.com/docs/devtools/network/reference#provisional-headers" target="_blank" rel="noopener">${t('learnMore')}</a></div>`
+    }
+
     html += this._section(
       t('responseHeaders'),
       this._kvTable(resHeaders, t('Header'), t('Value'))
@@ -425,6 +441,7 @@ export default class Detail extends Emitter {
 
     this._$container
       .on('click', c('.back'), () => this.hide())
+      .on('click', c('.dt-close'), () => this.hide())
       .on('click', c('.copy-res'), this._copyRes)
       .on('click', c('.copy-curl'), this._copyCurl)
       .on('click', c('.copy-fetch'), this._copyFetch)

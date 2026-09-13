@@ -7,7 +7,7 @@ const fs = require('fs')
 const path = require('path')
 
 const PORT = process.argv[2] || 3456
-const ROOT = __dirname
+const ROOT = path.join(__dirname, '..')
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -79,7 +79,7 @@ http
 
     // ---- Static files ----
     let filePath = path.join(ROOT, decodeURIComponent(url.pathname))
-    if (filePath === path.join(ROOT, '/')) filePath = path.join(ROOT, 'index.html')
+    if (filePath === path.join(ROOT, '/')) filePath = path.join(ROOT, 'demo', 'index.html')
     if (!filePath.startsWith(ROOT)) {
       res.writeHead(403)
       return res.end('Forbidden')
