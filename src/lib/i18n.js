@@ -278,6 +278,15 @@ const en = {
   noMatches: 'No matches',
   'Copy selector': 'Copy selector',
   'Copy XPath': 'Copy XPath',
+  // ---- DevTools-parity errors & settings ----
+  'Uncaught': 'Uncaught',
+  'Uncaught (in promise)': 'Uncaught (in promise)',
+  'XHR finished loading': 'XHR finished loading',
+  'Fetch finished loading': 'Fetch finished loading',
+  'Fetch failed': 'Fetch failed',
+  'Failed to load source': 'Failed to load source',
+  'Log XMLHttpRequests': 'Log XMLHttpRequests',
+  'Disable HTTP cache': 'Disable HTTP cache',
 }
 
 const zh = {
@@ -438,7 +447,7 @@ const zh = {
   // ---- Resources ----
   Script: '脚本',
   Stylesheet: '样式表',
-  Iframe: 'iframe',
+  Iframe: '框架',
   Image: '图片',
   'Local Storage': '本地存储',
   'Session Storage': '会话存储',
@@ -545,6 +554,15 @@ const zh = {
   noMatches: '无匹配项',
   'Copy selector': '复制选择器',
   'Copy XPath': '复制 XPath',
+  // ---- DevTools 风格报错与设置 ----
+  'Uncaught': '未捕获',
+  'Uncaught (in promise)': '未捕获（promise 中）',
+  'XHR finished loading': 'XHR 已完成加载',
+  'Fetch finished loading': 'Fetch 已完成加载',
+  'Fetch failed': 'Fetch 失败',
+  'Failed to load source': '无法加载源代码',
+  'Log XMLHttpRequests': '记录 XMLHttpRequest',
+  'Disable HTTP cache': '禁用 HTTP 缓存',
 }
 
 const I18N = { en, zh }

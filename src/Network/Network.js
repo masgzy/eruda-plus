@@ -7,6 +7,7 @@ import Detail from './Detail'
 import throttle from 'licia/throttle'
 import { getFileName, classPrefix as c, savePreservedLogs, loadPreservedLogs } from '../lib/util'
 import evalCss from '../lib/evalCss'
+import Settings from '../Settings/Settings'
 import chobitsu from '../lib/chobitsu'
 import emitter from '../lib/emitter'
 import LunaDataGrid from 'luna-data-grid'
@@ -149,6 +150,7 @@ export default class Network extends Tool {
     this._resizeSensor = new ResizeSensor($el.get(0))
     this._installIntercept()
     this._bindEvent()
+    this._initCfg()
     this._updateStats()
     this._renderChips()
     this._updateEmptyState()
@@ -176,6 +178,101 @@ export default class Network extends Tool {
       ret.push(request)
     })
     return ret
+  }
+  // ---------- public rule & throttle API (site demo / programmatic use) ----------
+  // Block requests matching the given pattern(s) and enable blocking.
+  block(patterns) {
+    const list = Array.isArray(patterns) ? patterns : [patterns]
+    const lines = this._blockPatternsText
+      ? this._blockPatternsText.split('\n')
+      : []
+    each(list, (p) => {
+      if (typeof p === 'string' && p && lines.indexOf(p) === -1) lines.push(p)
+    })
+    this._blockPatternsText = lines.join('\n')
+    this._blockEnabled = true
+    this._blockMatchers = compileBlockPatterns(this._blockPatternsText)
+    this._saveSettings()
+    this._refreshRulesUi()
+    return this
+  }
+  // Disable blocking; pass a pattern to remove a single entry.
+  unblock(pattern) {
+    if (typeof pattern === 'string' && pattern) {
+      const lines = this._blockPatternsText
+        ? this._blockPatternsText.split('\n')
+        : []
+      const next = lines.filter((line) => line !== pattern)
+      this._blockPatternsText = next.join('\n')
+      this._blockMatchers = compileBlockPatterns(this._blockPatternsText)
+      if (next.length === 0) this._blockEnabled = false
+    } else {
+      this._blockEnabled = false
+      this._blockPatternsText = ''
+      this._blockMatchers = []
+    }
+    this._saveSettings()
+    this._refreshRulesUi()
+    return this
+  }
+  // Add a mock rule. Accepts either the flat shape
+  // { pattern, status, contentType, body, enabled } (as stored) or the
+  // friendlier { url, response: { status, contentType, body } }.
+  mock(rule) {
+    if (!rule || typeof rule !== 'object') return this
+    const response = rule.response || {}
+    const body = rule.body != null ? rule.body : response.body != null ? response.body : ''
+    const status = Number(
+      rule.status != null ? rule.status : response.status != null ? response.status : 200
+    )
+    const contentType = String(
+      rule.contentType || response.contentType || 'application/json'
+    )
+    this._mockRules.push({
+      enabled: rule.enabled !== false,
+      pattern: String(rule.pattern || rule.url || ''),
+      status: Number.isNaN(status) ? 200 : status,
+      contentType,
+      body: String(body),
+    })
+    this._saveSettings()
+    this._refreshRulesUi()
+    return this
+  }
+  // Remove mock rules: by pattern, or all when omitted.
+  unmock(pattern) {
+    if (typeof pattern === 'string' && pattern) {
+      this._mockRules = this._mockRules.filter((rule) => rule.pattern !== pattern)
+    } else {
+      this._mockRules = []
+    }
+    this._saveSettings()
+    this._refreshRulesUi()
+    return this
+  }
+  // Apply a throttling profile: none | slow3g | fast3g | offline.
+  throttle(key) {
+    return this.throttleProfile(key)
+  }
+  throttleProfile(key) {
+    if (key !== 'none' && !THROTTLE_PROFILES[key]) return this
+    this._throttleKey = key
+    this._saveSettings()
+    this._syncThrottleSelect()
+    return this
+  }
+  // Return the current request log as a HAR object.
+  exportHar() {
+    return buildHar(this._requests)
+  }
+  _refreshRulesUi() {
+    if (this._$rulesPanel && this._$rulesPanel.hasClass(c('show'))) {
+      this._renderRulesPanel()
+    }
+  }
+  _syncThrottleSelect() {
+    if (!this._$control) return
+    this._$control.find(c('.throttle')).val(this._throttleKey || 'none')
   }
   _updateDataGridHeight() {
     this._requestDataGrid.fit()
@@ -478,6 +575,16 @@ export default class Network extends Tool {
       const info = this.__erudaInfo
       if (!info) return origSend.apply(this, arguments)
 
+      // Best-effort HTTP cache bypass, like DevTools "Disable cache".
+      if (self._disableCache && !info.headers['Cache-Control']) {
+        try {
+          origSetHeader.call(this, 'Cache-Control', 'no-cache, no-store, max-age=0')
+          origSetHeader.call(this, 'Pragma', 'no-cache')
+        } catch {
+          // Some headers may be forbidden; ignore.
+        }
+      }
+
       const body = typeof data === 'string' ? data : ''
 
       if (info.blocked) {
@@ -628,6 +735,23 @@ export default class Network extends Tool {
                 fetchArgs = [new Request(rewritten, input), init]
               } catch {
                 fetchArgs = outerArgs
+              }
+            }
+          }
+          // DevTools "Disable HTTP cache" parity: force no-store.
+          if (self._disableCache) {
+            const url0 = fetchArgs[0]
+            const init0 = fetchArgs[1]
+            if (typeof url0 === 'string') {
+              fetchArgs = [url0, { ...(init0 || {}), cache: 'no-store' }]
+            } else if (init0 || (url0 && url0.cache !== 'no-store')) {
+              try {
+                fetchArgs = [
+                  new Request(url0, { ...(init0 || {}), cache: 'no-store' }),
+                  init0,
+                ]
+              } catch {
+                // Non-GET with cache option may throw; keep original.
               }
             }
           }
@@ -1523,9 +1647,36 @@ export default class Network extends Tool {
   _updateScale = (scale) => {
     this._splitMediaQuery.setQuery(`screen and (min-width: ${680 * scale}px)`)
   }
+  // ---------- settings panel (DevTools parity) ----------
+  _initCfg() {
+    const settings = this._container.get('settings')
+    if (!settings) return
+
+    const cfg = (this.config = Settings.createCfg('network', {
+      disableCache: false,
+    }))
+    this._disableCache = !!cfg.get('disableCache')
+
+    cfg.on('change', (key, val) => {
+      if (key === 'disableCache') this._disableCache = val
+    })
+
+    settings
+      .text('Network')
+      .switch(cfg, 'disableCache', 'Disable HTTP cache')
+      .separator()
+  }
+  _rmCfg() {
+    const cfg = this.config
+    const settings = this._container.get('settings')
+    if (!settings || !cfg) return
+    settings.remove(cfg, 'disableCache').remove('Network')
+  }
+
   destroy() {
     super.destroy()
 
+    this._rmCfg()
     emitter.off(emitter.I18N, this._onI18n)
     if (this._detail) this._detail.destroy()
     this._resizeSensor.destroy()
