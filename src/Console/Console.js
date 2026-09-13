@@ -6,9 +6,9 @@ import isFn from 'licia/isFn'
 import Emitter from 'licia/Emitter'
 import isStr from 'licia/isStr'
 import isRegExp from 'licia/isRegExp'
+import isErr from 'licia/isErr'
 import startWith from 'licia/startWith'
 import endWith from 'licia/endWith'
-import uncaught from 'licia/uncaught'
 import trim from 'licia/trim'
 import upperFirst from 'licia/upperFirst'
 import isHidden from 'licia/isHidden'
@@ -23,14 +23,14 @@ import LunaConsole from 'luna-console'
 import each from 'licia/each'
 import escape from 'licia/escape'
 import contain from 'licia/contain'
+import ajax from 'licia/ajax'
 import {
   classPrefix as c,
   safeStringify,
   savePreservedLogs,
   loadPreservedLogs,
 } from '../lib/util'
-
-uncaught.start()
+import { absoluteUrl } from '../Network/util'
 
 export default class Console extends Tool {
   constructor({ name = 'console' } = {}) {
@@ -44,6 +44,9 @@ export default class Console extends Tool {
     this._watchExprs = []
     this._watchValues = []
     this._logBuffer = []
+    this._uncaughtMap = new WeakMap()
+    this._pendingStacks = []
+    this._httpHookInstalled = false
   }
   init($el, container) {
     super.init($el)
@@ -77,6 +80,15 @@ export default class Console extends Tool {
       }
 
       winConsole[name] = (...args) => {
+        if (name === 'error') {
+          // Capture the caller stack before luna wraps the args.
+          const stackObj = new Error()
+          this._pendingStacks.push({
+            stack: stackObj.stack || '',
+            from: 'override',
+            time: Date.now(),
+          })
+        }
         this[name](...args)
         origin(...args)
       }
@@ -98,14 +110,45 @@ export default class Console extends Tool {
     return this
   }
   catchGlobalErr() {
-    uncaught.addListener(this._handleErr)
+    window.addEventListener('error', this._handleWindowErr)
+    window.addEventListener('unhandledrejection', this._handleRejection)
 
     return this
   }
   ignoreGlobalErr() {
-    uncaught.rmListener(this._handleErr)
+    window.removeEventListener('error', this._handleWindowErr)
+    window.removeEventListener('unhandledrejection', this._handleRejection)
 
     return this
+  }
+  // Global errors are prefixed like Chrome DevTools:
+  // "Uncaught ..." / "Uncaught (in promise) ..."
+  _handleWindowErr = (event) => {
+    let err = event && event.error
+    if (!isErr(err)) {
+      const msg = event && event.message
+      if (!msg) return
+      err = new Error(msg)
+      err.stack =
+        `Error: ${msg}\n    at ${event.filename}:${event.lineno}:${event.colno}`
+    }
+    this._insertUncaught(err, 'Uncaught')
+  }
+  _handleRejection = (event) => {
+    const reason = event && event.reason
+    if (isErr(reason))
+      return this._insertUncaught(reason, 'Uncaught (in promise)')
+    const err = new Error(
+      isStr(reason) ? reason : safeStringify(reason, 200)
+    )
+    err.name = ''
+    err.stack = ''
+    this._insertUncaught(err, 'Uncaught (in promise)', true)
+  }
+  _insertUncaught(err, prefix, synthetic) {
+    if (!this.config || !this.config.get('catchGlobalErr')) return
+    this._uncaughtMap.set(err, { prefix, synthetic })
+    this.error(err)
   }
   filter(filter) {
     const $filterText = this._$filterText
@@ -130,6 +173,8 @@ export default class Console extends Tool {
     this._container.off('show', this._handleShow)
     if (this._watchTimer) clearInterval(this._watchTimer)
     window.removeEventListener('pagehide', this._savePreservedLogs)
+    this._setHttpLogging(false)
+    this.ignoreGlobalErr()
 
     if (this._style) {
       evalCss.remove(this._style)
@@ -255,6 +300,16 @@ export default class Console extends Tool {
     methods.forEach(
       (name) =>
         (this[name] = (...args) => {
+          if (name === 'error') {
+            // Every eruda error log gets a capture of the current stack so
+            // that non-Error arguments can still show a caller stack.
+            const stackObj = new Error()
+            this._pendingStacks.push({
+              stack: stackObj.stack || '',
+              from: 'tool',
+              time: Date.now(),
+            })
+          }
           logger[name](...args)
           this.emit(name, ...args)
           this._bufferLog(name, args)
@@ -405,11 +460,15 @@ export default class Console extends Tool {
     $input.on('focusin', () => this._showInput())
 
     logger.on('insert', (log) => {
+      if (log.type === 'error') this._formatErrorLog(log)
+
       const autoShow = log.type === 'error' && config.get('displayIfErr')
 
       if (autoShow) container.showTool('console').show()
     })
 
+    // Stack frame links open the file in Sources, like Chrome DevTools.
+    // Bound per-link in _formatStack so luna's own handlers can't win.
     logger.on('select', (log) => {
       this._selectedLog = log
       $control.find(c('.icon-copy')).rmClass(c('icon-disabled'))
@@ -421,6 +480,265 @@ export default class Console extends Tool {
     })
 
     container.on('show', this._handleShow)
+  }
+  // --- DevTools-style error rendering -------------------------------
+  // - expand stack by default (collapsed on click)
+  // - "Uncaught" / "Uncaught (in promise)" prefixes for global errors
+  // - each stack frame location becomes a link that opens in Sources
+  _formatErrorLog(log) {
+    const $row = log.$container
+    if (!$row || !$row.get(0)) return
+    const flag =
+      log.args && isErr(log.args[0]) && this._uncaughtMap.get(log.args[0])
+    if (flag) this._uncaughtMap.delete(log.args[0])
+
+    const err = log.args[0]
+    const isRealErr = isErr(err)
+    const synthetic = flag && flag.synthetic
+
+    // Consume queued stack captures. console.error produces an
+    // "override" capture followed by a "tool" one (both describe the
+    // same log); direct tool API calls produce only the "tool" one.
+    const now = Date.now()
+    let captured = null
+    while (this._pendingStacks.length) {
+      const item = this._pendingStacks.shift()
+      if (now - item.time > 3000) continue // stale, drop silently
+      captured = item
+      if (item.from === 'override') {
+        // Drop the paired tool capture emitted by the same call.
+        const next = this._pendingStacks[0]
+        if (next && next.from === 'tool') this._pendingStacks.shift()
+      }
+      break
+    }
+
+    let stackStr = isRealErr && !synthetic ? String(err.stack || '') : ''
+    let replaceStack = false
+    let dropNamePrefix = false
+
+    if (!isRealErr && captured) {
+      // luna wrapped non-Error args into an internal Error: swap in the
+      // captured caller stack so frames point to user code (DevTools).
+      stackStr = captured.stack
+      replaceStack = true
+      dropNamePrefix = true
+    }
+
+    const stackEl = $row.find('.luna-console-stack').get(0)
+
+    if (stackEl) {
+      if (synthetic) {
+        // Synthetic wrapper: hide internal stack entirely.
+        stackEl.style.display = 'none'
+      } else if (stackStr) {
+        this._formatStack(stackEl, stackStr, replaceStack)
+        // DevTools expands the stack of an error by default.
+        stackEl.classList.remove('luna-console-hidden')
+      }
+    }
+
+    if ((flag && flag.prefix) || dropNamePrefix) {
+      // Chrome DevTools: "Uncaught TypeError: ..." / "msg" for console.error
+      const el = $row.find('.luna-console-log-content').get(0)
+      if (el && el.firstChild && el.firstChild.nodeType === 3) {
+        let text = el.firstChild.textContent
+        if (synthetic || dropNamePrefix) {
+          text = text.replace(/^\s*Error:\s*/, '')
+        }
+        const prefix = flag && flag.prefix ? `${t(flag.prefix)} ` : ''
+        el.firstChild.textContent = `${prefix}${text}`
+      }
+    }
+
+    // Source link appended after the message, like DevTools.
+    if (stackStr) {
+      const m = stackStr.match(ERROR_LOCATION_RE)
+      if (m) {
+        const msgText = $row.find('.luna-console-log-content').get(0)
+        if (msgText) {
+          const link = document.createElement('span')
+          link.className = c('error-link error-source')
+          link.textContent = `${m[1]}:${m[2] || '1'}`
+          link.setAttribute('data-url', m[1])
+          link.setAttribute('data-line', m[2] || '1')
+          link.setAttribute('data-col', m[3] || '1')
+          const br = msgText.querySelector('br')
+          if (br && br.parentNode) {
+            br.parentNode.insertBefore(link, br)
+            br.parentNode.insertBefore(document.createTextNode(' '), br)
+          }
+          const self = this
+          link.onclick = (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            self._openInSources(
+              m[1],
+              m[2] || '1',
+              m[3] || '1'
+            )
+          }
+        }
+      }
+    }
+  }
+  _formatStack(stackEl, stackStr, replaceStack) {
+    // Drop the "Name: message" header line, keep frames only.
+    // For replaced stacks the first two lines are our own capture frames.
+    const lines = stackStr.split('\n').slice(replaceStack ? 2 : 1)
+    const html = map(lines, (line) => {
+      const escaped = escape(line)
+      const m = line.match(ERROR_LOCATION_RE)
+      if (!m) return escaped
+      const url = m[1]
+      const lineNum = m[2] || '1'
+      const attrs =
+        `data-url="${escape(url)}" data-line="${escape(lineNum)}"` +
+        ` data-col="${escape(m[3] || '1')}"`
+      const linkHtml =
+        `<span class="${c('error-link')}" ${attrs}>` +
+        `${escape(url)}:${escape(lineNum)}</span>`
+      const plainUrl = escape(url)
+      const idx = escaped.indexOf(plainUrl)
+      if (idx === -1) return escaped
+      return (
+        escaped.slice(0, idx) +
+        linkHtml +
+        escaped.slice(idx + plainUrl.length)
+      )
+    }).join('<br/>')
+    stackEl.innerHTML = html
+    // Bind clicks directly: delegation is unreliable inside luna's
+    // viewport-managed DOM.
+    const self = this
+    each(stackEl.querySelectorAll('.' + c('error-link')), (el) => {
+      el.onclick = (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        self._openInSources(
+          el.getAttribute('data-url'),
+          el.getAttribute('data-line'),
+          el.getAttribute('data-col')
+        )
+      }
+    })
+  }
+  _openInSources(url, line, col) {
+    if (!url) return
+    const container = this._container
+    const sources = container.get('sources')
+    const absolute = absoluteUrl(url)
+
+    if (!sources) {
+      window.open(absolute, '_blank')
+      return
+    }
+
+    ajax({
+      url: absolute,
+      dataType: 'raw',
+      success: (data) => {
+        const ext = (absolute.split('?')[0].match(/\.(\w+)$/) || [])[1] || 'js'
+        const type = contain(['js', 'css', 'html'], ext) ? ext : 'raw'
+        sources.set(type, data)
+        container.showTool('sources')
+        this._highlightSourceLine(line)
+      },
+      error: () => container.notify(t('Failed to load source')),
+    })
+    void col
+  }
+  _highlightSourceLine(line) {
+    if (!line) return
+    setTimeout(() => {
+      const rows = $('.luna-text-viewer-table-row')
+      const target = rows
+        .filter(function () {
+          return (
+            $(this).find('.luna-text-viewer-line-number').text() ===
+            String(line)
+          )
+        })
+        .get(0)
+      if (!target) return
+      rows.rmClass(c('line-highlight'))
+      $(target).addClass(c('line-highlight'))
+      target.scrollIntoView({ block: 'center' })
+    }, 80)
+  }
+  // --- Log XMLHttpRequests (DevTools setting) -------------------------
+  _setHttpLogging(enabled) {
+    if (enabled && !this._httpHookInstalled) {
+      this._installHttpHook()
+      this._httpHookInstalled = true
+    } else if (!enabled && this._httpHookInstalled) {
+      this._uninstallHttpHook()
+      this._httpHookInstalled = false
+    }
+  }
+  _installHttpHook() {
+    const proto = window.XMLHttpRequest.prototype
+    this._origXhrSend = proto.send
+    const self = this
+    proto.send = function (...args) {
+      const xhr = this
+      xhr.addEventListener('loadend', () => {
+        const info = xhr.__erudaInfo || {}
+        const url = info.url || xhr.responseURL || ''
+        if (!startWith(url, 'data:')) {
+          const method = info.method || 'GET'
+          const status = String(xhr.status)
+          const kind = startWith(status, '2') ? 'info' : 'error'
+          self[kind](`${t('XHR finished loading')}: ${method} ${url} [${status}]`)
+        }
+      })
+      return self._origXhrSend.apply(this, args)
+    }
+
+    const origFetch = window.fetch
+    if (origFetch) {
+      this._origFetchLog = origFetch
+      const wrapped = function (...args) {
+        const input = args[0]
+        const url =
+          typeof input === 'string'
+            ? input
+            : input && input.url
+              ? input.url
+              : String(input)
+        const method = String(
+          (args[1] && args[1].method) || (input && input.method) || 'GET'
+        ).toUpperCase()
+        return origFetch.apply(this, args).then(
+          (res) => {
+            const kind = res.ok ? 'info' : 'error'
+            self[kind](
+              `${t('Fetch finished loading')}: ${method} ${res.url || url} [${res.status}]`
+            )
+            return res
+          },
+          (err) => {
+            self.error(`${t('Fetch failed')}: ${method} ${url}`)
+            throw err
+          }
+        )
+      }
+      this._wrappedFetchLog = wrapped
+      window.fetch = wrapped
+    }
+  }
+  _uninstallHttpHook() {
+    if (this._origXhrSend) {
+      window.XMLHttpRequest.prototype.send = this._origXhrSend
+      delete this._origXhrSend
+    }
+    if (this._origFetchLog) {
+      if (window.fetch === this._wrappedFetchLog) {
+        window.fetch = this._origFetchLog
+      }
+      delete this._origFetchLog
+      delete this._wrappedFetchLog
+    }
   }
   _onI18n = () => {
     const $control = this._$control
@@ -500,7 +818,7 @@ export default class Console extends Tool {
     this._watchValues = []
     each(exprs, (expr, i) => {
       try {
-        // eslint-disable-next-line no-eval
+         
         this._watchValues[i] = (0, eval)(expr)
       } catch (e) {
         this._watchValues[i] = undefined
@@ -562,6 +880,7 @@ export default class Console extends Tool {
       .remove(cfg, 'displayIfErr')
       .remove(cfg, 'maxLogNum')
       .remove(cfg, 'preserveLog')
+      .remove(cfg, 'logHttpRequests')
       .remove(upperFirst(this.name))
   }
   _initCfg() {
@@ -579,6 +898,7 @@ export default class Console extends Tool {
       displayIfErr: false,
       maxLogNum: 'infinite',
       preserveLog: false,
+      logHttpRequests: false,
     }))
 
     this._enableJsExecution(cfg.get('jsExecution'))
@@ -586,6 +906,7 @@ export default class Console extends Tool {
     if (cfg.get('preserveLog')) {
       window.addEventListener('pagehide', this._savePreservedLogs)
     }
+    if (cfg.get('logHttpRequests')) this._setHttpLogging(true)
 
     cfg.on('change', (key, val) => {
       const logger = this._logger
@@ -616,6 +937,8 @@ export default class Console extends Tool {
             this._logBuffer = []
           }
           return
+        case 'logHttpRequests':
+          return this._setHttpLogging(val)
       }
     })
 
@@ -634,6 +957,7 @@ export default class Console extends Tool {
       .switch(cfg, 'displayGetterVal', 'Access Getter Value')
       .switch(cfg, 'lazyEvaluation', 'Lazy Evaluation')
       .switch(cfg, 'preserveLog', 'Preserve Log')
+      .switch(cfg, 'logHttpRequests', 'Log XMLHttpRequests')
       .select(cfg, 'maxLogNum', 'Max Log Number', [
         'infinite',
         '250',
@@ -645,6 +969,13 @@ export default class Console extends Tool {
       .separator()
   }
 }
+
+// Matches stack frame locations: absolute URLs, webpack-internal,
+// blob, file, and plain relative paths with optional :line:col.
+// The URL part stops before a trailing :line:col via lookahead so the
+// link href stays clean.
+const ERROR_LOCATION_RE =
+  /((?:https?:\/\/|webpack(?:-internal)?:\/\/|blob:|file:|capacitor:|ionic:)[^\s()"']*?(?=:\d+(?::\d+)*(?:$|[\s()"'<,])|[\s()"'<,]|$)|(?:(?:[\w.-]+\/)*[\w.-]+\.(?:js|mjs|cjs|ts|tsx|jsx|vue|svelte|html|json))(?:\?[^\s()"']*)?)(?::(\d+)(?::(\d+))?)?/
 
 const CONSOLE_METHOD = [
   'log',

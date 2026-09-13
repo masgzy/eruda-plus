@@ -91,6 +91,24 @@
       .luna-console-count {
         background: var(--console-error-foreground);
       }
+      // DevTools-style expanded stack trace: monospaced, slightly
+      // smaller, indented under the message.
+      .luna-console-stack {
+        margin-top: 4px;
+        font-family: $font-family-mono;
+        font-size: 11px;
+        line-height: 1.6;
+        opacity: 0.9;
+        word-break: break-all;
+      }
+      .eruda-error-link {
+        color: var(--link-color) !important;
+        text-decoration: underline;
+        cursor: pointer;
+        &.eruda-error-source {
+          opacity: 0.75;
+        }
+      }
     }
     .luna-console-code {
       @include luna-console-highlight();
@@ -368,6 +386,13 @@
     }
     .luna-text-viewer-copy {
       background-color: var(--background);
+    }
+    // Jumped-to line when opening a stack frame link from Console.
+    .eruda-line-highlight {
+      .luna-text-viewer-line-text {
+        background: var(--highlight);
+        color: var(--select-foreground);
+      }
     }
   }
 
