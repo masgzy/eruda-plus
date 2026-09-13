@@ -9,8 +9,9 @@
 #   3. The `CNAME` file inside `site/` is shipped with the artifact, so the
 #      custom domain (eruda.cc.cd) is applied automatically on every deploy.
 #
-# Repo settings to enable once:
-#   Settings → Pages → Build and deployment → Source = "GitHub Actions"
+# No manual repo setting needed: `configure-pages` runs with `enablement:
+# true`, so the workflow's own GITHUB_TOKEN (pages: write) turns the Pages
+# source on automatically on first deploy.
 # Custom domain DNS (eruda.cc.cd):
 #   CNAME  eruda.cc.cd  →  masgzy.github.io.
 #   (or A/AAAA records to the Pages anycast IPs if using an apex)
@@ -20,7 +21,7 @@ name: Deploy site to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'site/**'
       - '.github/workflows/deploy-pages.yml'
@@ -47,6 +48,10 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          # Self-service: enable Pages with the "GitHub Actions" source
+          # if it is not enabled yet (no manual step required).
+          enablement: true
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
