@@ -17,8 +17,94 @@
     .icon-copy {
       right: 23px;
     }
+    .txt-btn {
+      position: absolute;
+      top: 0;
+      padding: 10px 5px;
+      font-size: $font-size;
+      line-height: 20px;
+      cursor: pointer;
+      color: var(--primary);
+      font-family: $font-family-mono;
+      transition: color $anim-duration;
+      &:active,
+      &.active {
+        color: var(--accent);
+      }
+    }
+    .copy-selector {
+      right: 69px;
+    }
+    .copy-xpath {
+      right: 95px;
+    }
     .icon-delete {
-      right: 46px;
+      right: 121px;
+    }
+    .icon-select {
+      left: 0;
+    }
+    .icon-search {
+      right: 142px;
+      &.active {
+        color: var(--accent);
+      }
+    }
+  }
+  .search-bar {
+    @include absolute(100%, 30px);
+    top: 40px;
+    display: none;
+    align-items: center;
+    padding: 0 8px;
+    background: var(--darker-background);
+    border-bottom: 1px solid var(--border);
+    z-index: 5;
+    &.active {
+      display: flex;
+    }
+    input {
+      flex: 1;
+      min-width: 0;
+      height: 22px;
+      border: none;
+      outline: none;
+      background: var(--background);
+      color: var(--primary);
+      font-size: $font-size;
+      padding: 0 8px;
+      border-radius: 3px;
+      user-select: text;
+      font-family: $font-family;
+    }
+    .search-count {
+      flex: none;
+      margin: 0 6px;
+      font-size: $font-size-s;
+      color: var(--primary);
+      white-space: nowrap;
+    }
+    .search-nav {
+      flex: none;
+      padding: 4px 7px;
+      cursor: pointer;
+      color: var(--primary);
+      font-size: $font-size;
+      user-select: none;
+      &:active {
+        color: var(--accent);
+      }
+    }
+    .search-close {
+      flex: none;
+      padding: 4px 7px;
+      cursor: pointer;
+      color: var(--primary);
+      font-size: $font-size-l;
+      user-select: none;
+      &:active {
+        color: var(--accent);
+      }
     }
   }
   .dom-viewer-container {

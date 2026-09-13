@@ -24,6 +24,8 @@ import Settings from '../Settings/Settings'
 import LunaModal from 'luna-modal'
 import LunaBoxModel from 'luna-box-model'
 import chobitsu from '../lib/chobitsu'
+import emitter from '../lib/emitter'
+import { t } from '../lib/i18n'
 import { formatNodeName } from './util'
 import { isErudaEl, classPrefix as c } from '../lib/util'
 
@@ -36,6 +38,16 @@ export default class Detail {
     this._initCfg()
     this._initTpl()
     this._bindEvent()
+    emitter.on(emitter.I18N, this._onI18n)
+  }
+  destroy() {
+    emitter.off(emitter.I18N, this._onI18n)
+    this._disableObserver()
+    this.restoreEventTarget()
+    this._rmCfg()
+  }
+  _onI18n = () => {
+    if (this._$container.css('display') !== 'none') this._render()
   }
   show(el) {
     this._curEl = el
@@ -49,11 +61,6 @@ export default class Detail {
     this._$container.hide()
     this._disableObserver()
     chobitsu.domain('Overlay').hideHighlight()
-  }
-  destroy() {
-    this._disableObserver()
-    this.restoreEventTarget()
-    this._rmCfg()
   }
   overrideEventTarget() {
     const winEventProto = getWinEventProto()
@@ -149,7 +156,7 @@ export default class Detail {
 
     $elementName.html(data.name)
 
-    let attributes = '<tr><td>Empty</td></tr>'
+    let attributes = `<tr><td>${t('Empty')}</td></tr>`
     if (!isEmpty(data.attributes)) {
       attributes = map(data.attributes, ({ name, value }) => {
         return `<tr>
@@ -158,7 +165,7 @@ export default class Detail {
         </tr>`
       }).join('')
     }
-    attributes = `<h2>Attributes</h2>
+    attributes = `<h2>${t('Attributes')}</h2>
     <div class="${c('table-wrapper')}">
       <table>
         <tbody>
@@ -182,7 +189,7 @@ export default class Detail {
           <div>}</div>
         </div>`
       }).join('')
-      styles = `<h2>Styles</h2>
+      styles = `<h2>${t('Styles')}</h2>
       <div class="${c('style-wrapper')}">
         ${style}
       </div>`
@@ -203,7 +210,7 @@ export default class Detail {
       }
 
       computedStyle = `<h2>
-        Computed Style
+        ${t('Computed Style')}
         ${toggleButton}
         <div class="${c('btn computed-style-search')}">
           <span class="${c('icon-filter')}"></span>
@@ -252,7 +259,7 @@ export default class Detail {
           </ul>
         </div>`
       }).join('')
-      listeners = `<h2>Event Listeners</h2>
+      listeners = `<h2>${t('Event Listeners')}</h2>
       <div class="${c('listener-wrapper')}">
         ${listeners} 
       </div>`
@@ -314,7 +321,7 @@ export default class Detail {
         this._toggleAllComputedStyle()
       )
       .on('click', c('.computed-style-search'), () => {
-        LunaModal.prompt('Filter').then((filter) => {
+        LunaModal.prompt(t('Filter')).then((filter) => {
           if (isNull(filter)) return
           filter = trim(filter)
           this._computedStyleSearchKeyword = filter
@@ -341,7 +348,7 @@ export default class Detail {
       .on('click', c('.back'), this.hide)
       .on('click', c('.refresh'), () => {
         this._render()
-        devtools.notify('Refreshed', { icon: 'success' })
+        devtools.notify(t('Refreshed'), { icon: 'success' })
       })
 
     this._boxModel.on('highlight', this._highlight)
