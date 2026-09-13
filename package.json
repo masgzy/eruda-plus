@@ -1,8 +1,8 @@
 {
   "name": "eruda-plus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Enhanced mobile web console: eruda with Chrome DevTools experience (bilingual UI, DevTools-style Network panel, block/rewrite/mock/throttle, HAR, Live Expressions and more)",
-  "main": "eruda.js",
+  "main": "dist/eruda.js",
   "browserslist": [
     "since 2015",
     "not dead"
@@ -75,6 +75,7 @@
     "karma-sourcemap-loader": "^0.3.7",
     "karma-webpack": "^5.0.0",
     "licia": "^1.44.0",
+    "lsla": "^1.0.2",
     "luna-box-model": "^1.0.1",
     "luna-console": "^1.3.6",
     "luna-data-grid": "^1.6.4",

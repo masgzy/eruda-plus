@@ -160,7 +160,7 @@ node demo/server.js   # zero dependencies
 # open http://localhost:3456/plugin    → official eruda + standalone plugin demo
 ```
 
-Try it online: <https://eruda.cc.cd/demo.html>
+Try it online: <https://eruda.cc.cd>
 
 ## 📖 Documentation
 

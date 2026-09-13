@@ -16,6 +16,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-13
+
+DevTools 式报错呈现、DevTools 设置项补齐、Network 编程 API，以及官网全面 VitePress 化（EasyTier 同款设计语言）。
+
+### 中文
+
+#### 新增
+
+- **DevTools 式报错（Console）**：未捕获异常自动加 `Uncaught`、未捕获的 Promise 拒绝自动加 `Uncaught (in promise)` 前缀（中文界面显示「未捕获」「未捕获（promise 中）」）；错误堆栈默认展开，`console.error` 显示调用者堆栈而非 eruda 内部堆栈；堆栈帧与消息行尾的 `文件:行号` 链接可点击，直达 Sources 面板并高亮对应行
+- **DevTools 设置项补齐**：Console 新增「记录 XMLHttpRequest」（所有 XHR/fetch 请求回显到控制台，2xx 信息样式、其余错误样式）；Network 新增「禁用 HTTP 缓存」（开启后 fetch 强制 `cache: 'no-store'`、XHR 注入 `Cache-Control: no-cache`）
+- **Network 编程 API**：`network.block(pattern) / unblock(pattern?) / mock(rule) / unmock(pattern?) / throttle(key) / throttleProfile(key) / exportHar()`，规则即时同步到规则面板 UI 并持久化，供脚本与自动化测试直接驱动
+- **官网全面 VitePress 化**：彻底替换手写 HTML 站点，采用与 EasyTier 相同的技术栈与设计语言——`@theojs/lumen` 主题（水墨笔触标题 + 墨绿渐变 Hero）、无顶部链接栏、亮暗双主题、中英双语（zh 根路径 + /en/）、本地搜索中文化；首页介绍下方直接内嵌真实 eruda-plus 实测（非 iframe），测试动作折叠为「测试」下拉栏
+- **双语文档站**：9 个指南页 × 2 语言（功能简介 / 快速上手 / 安装方式 / Console / Network / 其他面板 / 配置项 / 常见问题 / 路线图），路线图覆盖 Console/Elements/Resources/Sources/Info/Settings 全板块的 DevTools 化计划
+- **CI**：新增 `publish.yml`——npm OIDC 可信发布（Trusted Publishing，无需 NPM_TOKEN，自动生成 provenance），推送 `v*` tag 或手动触发；`deploy-pages.yml` 修复损坏的 `branches` 触发器并改为 VitePress 构建
+
+#### 变更
+
+- **i18n**：Resources 的 iframe 分组译名修正为「框架」；新增报错与设置相关词条（未捕获 / 记录 XMLHttpRequest / 禁用 HTTP 缓存 等）
+- `package.json` 的 `main` 修正指向 `dist/eruda.js`；README 在线体验链接更新为官网首页（demo.html 已移除）
+
+### English
+
+#### Added
+
+- **DevTools-style errors (Console)**: uncaught exceptions are labelled `Uncaught`, unhandled promise rejections `Uncaught (in promise)` (localized in Chinese as 未捕获 / 未捕获（promise 中）); error stacks are expanded by default; `console.error` shows the caller's stack instead of eruda internals; stack frames and the trailing `file:line` link open the file in Sources with the line highlighted
+- **DevTools settings parity**: Console gains "Log XMLHttpRequests" (echoes every XHR/fetch into the console); Network gains "Disable HTTP cache" (forces `cache: 'no-store'` on fetch, injects `Cache-Control: no-cache` on XHR)
+- **Network programmatic API**: `network.block(pattern) / unblock(pattern?) / mock(rule) / unmock(pattern?) / throttle(key) / throttleProfile(key) / exportHar()`; rules sync into the rules panel UI live and persist
+- **VitePress website**: the handwritten HTML site is fully replaced with the same stack and design language as EasyTier — `@theojs/lumen` theme (ink-brush hero underline + gradient), no top link bar, light/dark themes, bilingual zh/en locales with localized local search; the home page embeds a real eruda-plus console (no iframe) with all test actions folded into a collapsible dropdown
+- **Bilingual docs**: 9 guide pages × 2 languages (introduction / getting started / installation / console / network / other panels / configuration / FAQ / roadmap) with a full DevTools-parity roadmap across all panels
+- **CI**: new `publish.yml` — npm OIDC trusted publishing (no NPM_TOKEN, provenance generated), triggered by `v*` tags or manually; `deploy-pages.yml` fixes the corrupted `branches` trigger and builds with VitePress
+
+#### Changed
+
+- **i18n**: the Resources iframe group is now translated as 「框架」; new strings for errors and settings
+- `package.json` `main` now points to `dist/eruda.js`; README live-demo links point to the site root (demo.html removed)
+
 ## [0.2.0] - 2026-09-13
 
 以 Chrome DevTools 真实前端（chrome-devtools-frontend.appspot.com serve_rev，Chrome 151 同版）为像素级参照的 UI 保真版本；官网按 VitePress / EasyTier 设计语言重做并内嵌在线实测。
