@@ -10,6 +10,8 @@ import replaceAll from 'licia/replaceAll'
 import highlight from 'licia/highlight'
 import LunaTextViewer from 'luna-text-viewer'
 import evalCss from '../lib/evalCss'
+import emitter from '../lib/emitter'
+import { t } from '../lib/i18n'
 import { classPrefix as c } from '../lib/util'
 
 export default class Sources extends Tool {
@@ -27,8 +29,11 @@ export default class Sources extends Tool {
     this._container = container
     this._bindEvent()
     this._initCfg()
+
+    emitter.on(emitter.I18N, this._onI18n)
   }
   destroy() {
+    emitter.off(emitter.I18N, this._onI18n)
     super.destroy()
 
     evalCss.remove(this._style)
@@ -95,13 +100,16 @@ export default class Sources extends Tool {
     ajax({
       url: location.href,
       success: (data) => (this._html = data),
-      error: () => (this._html = 'Sorry, unable to fetch source code:('),
+      error: () => (this._html = t('Sorry, unable to fetch source code:(')),
       complete: () => {
         this._isGettingHtml = false
         this._renderDef()
       },
       dataType: 'raw',
     })
+  }
+  _onI18n = () => {
+    if (this._data) this._render()
   }
   _bindEvent() {
     this._container.on('showTool', (name, lastTool) => {

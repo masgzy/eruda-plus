@@ -8,6 +8,7 @@ import isNull from 'licia/isNull'
 import trim from 'licia/trim'
 import copy from 'licia/copy'
 import emitter from '../lib/emitter'
+import { t } from '../lib/i18n'
 import { safeStorage, classPrefix as c } from '../lib/util'
 
 export default class Storage {
@@ -21,26 +22,38 @@ export default class Storage {
 
     this._initTpl()
     this._dataGrid = new LunaDataGrid(this._$dataGrid.get(0), {
-      columns: [
-        {
-          id: 'key',
-          title: 'Key',
-          weight: 30,
-        },
-        {
-          id: 'value',
-          title: 'Value',
-          weight: 90,
-        },
-      ],
+      columns: this._gridColumns(),
       minHeight: 60,
       maxHeight: 223,
     })
+    emitter.on(emitter.I18N, this._onI18n)
 
     this._bindEvent()
   }
+  _gridColumns() {
+    return [
+      { id: 'key', title: t('Key'), weight: 30 },
+      { id: 'value', title: t('Value'), weight: 90 },
+    ]
+  }
+  _onI18n = () => {
+    if (this._dataGrid) {
+      const grid = this._dataGrid
+      grid.setOption('columns', this._gridColumns())
+      if (grid.renderHeader) grid.renderHeader()
+    }
+    if (this._$container) {
+      this._$container
+        .find(c('.title'))
+        .get(0)
+        .childNodes &&
+        (this._$container.find(c('.title')).get(0).childNodes[0].textContent =
+          this._type === 'local' ? t('Local Storage') : t('Session Storage'))
+    }
+  }
   destroy() {
     emitter.off(emitter.SCALE, this._updateGridHeight)
+    emitter.off(emitter.I18N, this._onI18n)
   }
   refresh() {
     const dataGrid = this._dataGrid
@@ -107,11 +120,10 @@ export default class Storage {
   }
   _initTpl() {
     const $container = this._$container
-    const type = this._type
 
     $container.html(
       c(`<h2 class="title">
-      ${type === 'local' ? 'Local' : 'Session'} Storage
+      ${this._type === 'local' ? t('Local Storage') : t('Session Storage')}
       <div class="btn refresh-storage">
         <span class="icon icon-refresh"></span>
       </div>
@@ -155,7 +167,7 @@ export default class Storage {
 
     this._$container
       .on('click', c('.refresh-storage'), () => {
-        devtools.notify('Refreshed', { icon: 'success' })
+        devtools.notify(t('Refreshed'), { icon: 'success' })
         this.refresh()
       })
       .on('click', c('.clear-storage'), () => {
@@ -181,10 +193,10 @@ export default class Storage {
       .on('click', c('.copy-storage'), () => {
         const key = this._selectedItem
         copy(this._getVal(key))
-        devtools.notify('Copied', { icon: 'success' })
+        devtools.notify(t('Copied'), { icon: 'success' })
       })
       .on('click', c('.filter'), () => {
-        LunaModal.prompt('Filter').then((filter) => {
+        LunaModal.prompt(t('Filter')).then((filter) => {
           if (isNull(filter)) return
           filter = trim(filter)
           this._$filterText.text(filter)

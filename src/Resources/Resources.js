@@ -14,6 +14,8 @@ import concat from 'licia/concat'
 import map from 'licia/map'
 import { isErudaEl, classPrefix as c } from '../lib/util'
 import evalCss from '../lib/evalCss'
+import emitter from '../lib/emitter'
+import { t } from '../lib/i18n'
 import Storage from './Storage'
 import Cookie from './Cookie'
 import { setState, getState } from './util'
@@ -51,6 +53,11 @@ export default class Resources extends Tool {
     this._bindEvent()
     this._initObserver()
     this._initCfg()
+
+    emitter.on(emitter.I18N, this._onI18n)
+  }
+  _onI18n = () => {
+    if (this.active) this.refresh()
   }
   refresh() {
     return this.refreshLocalStorage()
@@ -62,6 +69,7 @@ export default class Resources extends Tool {
       .refreshImage()
   }
   destroy() {
+    emitter.off(emitter.I18N, this._onI18n)
     super.destroy()
 
     this._localStorage.destroy()
@@ -82,7 +90,7 @@ export default class Resources extends Tool {
     scriptData = unique(scriptData)
 
     const scriptState = getState('script', scriptData.length)
-    let scriptDataHtml = '<li>Empty</li>'
+    let scriptDataHtml = `<li>${t('Empty')}</li>`
     if (!isEmpty(scriptData)) {
       scriptDataHtml = map(scriptData, (script) => {
         script = escape(script)
@@ -93,7 +101,7 @@ export default class Resources extends Tool {
     }
 
     const scriptHtml = `<h2 class="${c('title')}">
-      Script
+      ${t('Script')}
       <div class="${c('btn refresh-script')}">
         <span class="${c('icon-refresh')}"></span>
       </div>
@@ -120,7 +128,7 @@ export default class Resources extends Tool {
     stylesheetData = unique(stylesheetData)
 
     const stylesheetState = getState('stylesheet', stylesheetData.length)
-    let stylesheetDataHtml = '<li>Empty</li>'
+    let stylesheetDataHtml = `<li>${t('Empty')}</li>`
     if (!isEmpty(stylesheetData)) {
       stylesheetDataHtml = map(stylesheetData, (stylesheet) => {
         stylesheet = escape(stylesheet)
@@ -131,7 +139,7 @@ export default class Resources extends Tool {
     }
 
     const stylesheetHtml = `<h2 class="${c('title')}">
-      Stylesheet
+      ${t('Stylesheet')}
       <div class="${c('btn refresh-stylesheet')}">
         <span class="${c('icon-refresh')}"></span>
       </div>
@@ -158,7 +166,7 @@ export default class Resources extends Tool {
 
     iframeData = unique(iframeData)
 
-    let iframeDataHtml = '<li>Empty</li>'
+    let iframeDataHtml = `<li>${t('Empty')}</li>`
     if (!isEmpty(iframeData)) {
       iframeDataHtml = map(iframeData, (iframe) => {
         iframe = escape(iframe)
@@ -168,7 +176,7 @@ export default class Resources extends Tool {
       }).join('')
     }
     const iframeHtml = `<h2 class="${c('title')}">
-      Iframe
+      ${t('Iframe')}
       <div class="${c('btn refresh-iframe')}">
         <span class="${c('icon-refresh')}"></span>
       </div>
@@ -228,7 +236,7 @@ export default class Resources extends Tool {
     imageData.sort()
 
     const imageState = getState('image', imageData.length)
-    let imageDataHtml = '<li>Empty</li>'
+    let imageDataHtml = `<li>${t('Empty')}</li>`
     if (!isEmpty(imageData)) {
       // prettier-ignore
       imageDataHtml = map(imageData, (image) => {
@@ -239,7 +247,7 @@ export default class Resources extends Tool {
     }
 
     const imageHtml = `<h2 class="${c('title')}">
-      Image
+      ${t('Image')}
       <div class="${c('btn refresh-image')}">
         <span class="${c('icon-refresh')}"></span>
       </div>
@@ -290,19 +298,19 @@ export default class Resources extends Tool {
 
     $el
       .on('click', '.eruda-refresh-script', () => {
-        container.notify('Refreshed', { icon: 'success' })
+        container.notify(t('Refreshed'), { icon: 'success' })
         this.refreshScript()
       })
       .on('click', '.eruda-refresh-stylesheet', () => {
-        container.notify('Refreshed', { icon: 'success' })
+        container.notify(t('Refreshed'), { icon: 'success' })
         this.refreshStylesheet()
       })
       .on('click', '.eruda-refresh-iframe', () => {
-        container.notify('Refreshed', { icon: 'success' })
+        container.notify(t('Refreshed'), { icon: 'success' })
         this.refreshIframe()
       })
       .on('click', '.eruda-refresh-image', () => {
-        container.notify('Refreshed', { icon: 'success' })
+        container.notify(t('Refreshed'), { icon: 'success' })
         this.refreshImage()
       })
       .on('click', '.eruda-img-link', function () {

@@ -20,6 +20,7 @@ import pointerEvent from 'licia/pointerEvent'
 import evalCss from '../lib/evalCss'
 import emitter from '../lib/emitter'
 import { isDarkTheme } from '../lib/themes'
+import { t, getLang, setLang, detectLang } from '../lib/i18n'
 import LunaNotification from 'luna-notification'
 import LunaModal from 'luna-modal'
 import LunaTab from 'luna-tab'
@@ -39,6 +40,7 @@ export default class DevTools extends Emitter {
         transparency: 1,
         displaySize: 80,
         theme: 'System preference',
+        language: 'auto',
       },
       defaults
     )
@@ -120,12 +122,12 @@ export default class DevTools extends Emitter {
     if (name === 'settings') {
       tab.append({
         id: name,
-        title: name,
+        title: t(upperFirst(name)),
       })
     } else {
       tab.insert(tab.length - 1, {
         id: name,
-        title: name,
+        title: t(upperFirst(name)),
       })
     }
 
@@ -191,6 +193,10 @@ export default class DevTools extends Emitter {
   initCfg(settings) {
     const cfg = (this.config = Settings.createCfg('dev-tools', this._defCfg))
 
+    // Apply the saved language before any tool renders.
+    const savedLang = cfg.get('language')
+    if (savedLang === 'en' || savedLang === 'zh') setLang(savedLang)
+
     this._setTransparency(cfg.get('transparency'))
     this._setDisplaySize(cfg.get('displaySize'))
     this._setTheme(cfg.get('theme'))
@@ -203,15 +209,25 @@ export default class DevTools extends Emitter {
           return this._setDisplaySize(val)
         case 'theme':
           return this._setTheme(val)
+        case 'language':
+          return val === 'auto' ? setLang(detectLang()) : setLang(val)
       }
     })
 
     settings
       .separator()
-      .select(cfg, 'theme', 'Theme', [
-        'System preference',
-        ...keys(evalCss.getThemes()),
-      ])
+      .select(cfg, 'language', 'Language / 语言', {
+        auto: 'Follow System',
+        en: 'English',
+        zh: '中文',
+      })
+
+    const themeOptions = {}
+    each(
+      ['System preference', ...keys(evalCss.getThemes())],
+      (theme) => (themeOptions[theme] = t(theme))
+    )
+    settings.select(cfg, 'theme', 'Theme', themeOptions)
 
     if (!this._inline) {
       settings
@@ -251,6 +267,7 @@ export default class DevTools extends Emitter {
   }
   destroy() {
     evalCss.remove(this._style)
+    emitter.off(emitter.I18N, this._onI18n)
     this.removeAll()
     this._tab.destroy()
     this._$el.remove()
@@ -338,6 +355,30 @@ export default class DevTools extends Emitter {
   }
   _initModal() {
     LunaModal.setContainer(this._$el.find(c('.modal')).get(0))
+    // Sync luna-modal button texts (OK / Cancel) with our language.
+    if (LunaModal.i18n) {
+      LunaModal.i18n.locale(getLang() === 'zh' ? 'zh-CN' : 'en-US')
+    }
+  }
+  _onI18n = () => {
+    if (LunaModal.i18n) {
+      LunaModal.i18n.locale(getLang() === 'zh' ? 'zh-CN' : 'en-US')
+    }
+    this._updateTabTitles()
+  }
+  _updateTabTitles() {
+    // Update titles in place — luna-tab's remove() refuses to delete
+    // the last remaining item, so rebuilding the strip is unsafe.
+    this._$el
+      .find(c('.tab'))
+      .find('.luna-tab-item')
+      .each(function () {
+        const $item = $(this)
+        const id = $item.data('id')
+        if (!id) return
+        $item.find('.luna-tab-title').text(t(upperFirst(id)))
+      })
+    nextTick(() => this._tab.updateSlider())
   }
   _bindEvent() {
     const $resizer = this._$el.find(c('.resizer'))
@@ -397,6 +438,7 @@ export default class DevTools extends Emitter {
     window.addEventListener('resize', this._checkSafeArea)
 
     emitter.on(emitter.SCALE, this._updateTabHeight)
+    emitter.on(emitter.I18N, this._onI18n)
 
     theme.on('change', () => {
       const t = this.config.get('theme')

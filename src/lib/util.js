@@ -170,3 +170,78 @@ export function eventPage(type, e) {
 
   return 0
 }
+
+// ---- Preserve Log helpers (shared by Console & Network) ----
+
+export function safeStringify(val, maxLen = 2000, depth = 0) {
+  try {
+    if (isUndef(val)) return 'undefined'
+    if (val === null) return 'null'
+    const t = typeof val
+    if (t === 'string') return val
+    if (t === 'number' || t === 'boolean') return String(val)
+    if (t === 'function') {
+      const name = val.name ? `: ${val.name}` : ''
+      return `[Function${name}]`
+    }
+    if (t === 'symbol') return val.toString()
+    if (val instanceof Error) return `${val.name}: ${val.message}`
+    if (val instanceof Element) {
+      return val.tagName ? `<${val.tagName.toLowerCase()}>` : '[Element]'
+    }
+    if (depth > 3) return '[Depth limit]'
+    if (Array.isArray(val)) {
+      return `[${val
+        .slice(0, 20)
+        .map((v) => safeStringify(v, maxLen, depth + 1))
+        .join(', ')}]`
+    }
+    const obj = val
+    const keys = []
+    for (const k in obj) {
+      if (keys.length >= 20) break
+      keys.push(k)
+    }
+    const body = keys
+      .map((k) => {
+        let v
+        try {
+          v = obj[k]
+        } catch {
+          v = '[unaccessible]'
+        }
+        return `${k}: ${safeStringify(v, maxLen, depth + 1)}`
+      })
+      .join(', ')
+    const ctor = obj.constructor && obj.constructor.name
+    const prefix = ctor && ctor !== 'Object' ? `${ctor} ` : ''
+    return `${prefix}{${body}}`
+  } catch {
+    return '[Unserializable]'
+  }
+}
+
+const PRESERVE_MAX = 300 * 1024
+
+export function savePreservedLogs(key, data) {
+  try {
+    const store = safeStorage('session', true)
+    const json = JSON.stringify(data)
+    if (json.length > PRESERVE_MAX) return
+    store.setItem(`eruda-preserved-${key}`, json)
+  } catch {
+    // Ignore quota errors
+  }
+}
+
+export function loadPreservedLogs(key) {
+  try {
+    const store = safeStorage('session', true)
+    const json = store.getItem(`eruda-preserved-${key}`)
+    if (!json) return null
+    store.removeItem(`eruda-preserved-${key}`)
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}

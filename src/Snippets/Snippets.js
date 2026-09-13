@@ -6,6 +6,8 @@ import escape from 'licia/escape'
 import map from 'licia/map'
 import remove from 'licia/remove'
 import evalCss from '../lib/evalCss'
+import emitter from '../lib/emitter'
+import { t } from '../lib/i18n'
 import { classPrefix as c } from '../lib/util'
 
 export default class Snippets extends Tool {
@@ -23,11 +25,33 @@ export default class Snippets extends Tool {
 
     this._bindEvent()
     this._addDefSnippets()
+
+    emitter.on(emitter.I18N, this._onI18n)
   }
   destroy() {
+    emitter.off(emitter.I18N, this._onI18n)
     super.destroy()
 
     evalCss.remove(this._style)
+  }
+  _onI18n = () => {
+    this._render()
+  }
+  _render() {
+    const html = map(this._snippets, (snippet, idx) => {
+      return `<div class="${c('section run')}" data-idx="${idx}">
+        <h2 class="${c('name')}">${escape(t(snippet.name))}
+          <div class="${c('btn')}">
+            <span class="${c('icon-play')}"></span>
+          </div>
+        </h2>
+        <div class="${c('description')}">
+          ${escape(t(snippet.desc))}
+        </div>
+      </div>`
+    }).join('')
+
+    this._renderHtml(html)
   }
   add(name, fn, desc) {
     this._snippets.push({ name, fn, desc })
@@ -74,22 +98,6 @@ export default class Snippets extends Tool {
     each(defSnippets, (snippet) => {
       this.add(snippet.name, snippet.fn, snippet.desc)
     })
-  }
-  _render() {
-    const html = map(this._snippets, (snippet, idx) => {
-      return `<div class="${c('section run')}" data-idx="${idx}">
-        <h2 class="${c('name')}">${escape(snippet.name)}
-          <div class="${c('btn')}">
-            <span class="${c('icon-play')}"></span>
-          </div>
-        </h2>
-        <div class="${c('description')}">
-          ${escape(snippet.desc)}
-        </div>
-      </div>`
-    }).join('')
-
-    this._renderHtml(html)
   }
   _renderHtml(html) {
     if (html === this._lastHtml) return

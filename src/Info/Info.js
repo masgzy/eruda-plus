@@ -10,6 +10,8 @@ import escape from 'licia/escape'
 import copy from 'licia/copy'
 import $ from 'licia/$'
 import { classPrefix as c } from '../lib/util'
+import emitter from '../lib/emitter'
+import { t } from '../lib/i18n'
 
 export default class Info extends Tool {
   constructor() {
@@ -26,8 +28,11 @@ export default class Info extends Tool {
 
     this._addDefInfo()
     this._bindEvent()
+
+    emitter.on(emitter.I18N, this._onI18n)
   }
   destroy() {
+    emitter.off(emitter.I18N, this._onI18n)
     super.destroy()
 
     evalCss.remove(this._style)
@@ -85,13 +90,17 @@ export default class Info extends Tool {
   _addDefInfo() {
     each(defInfo, (info) => this.add(info.name, info.val))
   }
+  _onI18n = () => {
+    // Re-render even when hidden so the next open shows the new language.
+    this._render()
+  }
   _render() {
     const infos = []
 
     each(this._infos, ({ name, val }) => {
       if (isFn(val)) val = val()
 
-      infos.push({ name, val })
+      infos.push({ name: t(name), val })
     })
 
     const html = `<ul>${map(
