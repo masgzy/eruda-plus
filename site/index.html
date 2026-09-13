@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eruda-plus · 移动端网页的 Chrome DevTools 级调试控制台</title>
+<meta name="description" content="eruda-plus：基于 eruda 深度增强的移动端调试控制台。DevTools 风格 UI、全工具中英双语、请求阻断/重写/Mock/节流、HAR 导入导出、Live Expressions、DOM 搜索。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23202124'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='%238ab4f8' font-family='monospace'>&gt;_</text></svg>">
+<style>
+  :root{
+    --bg:#202124; --bg-soft:#292a2d; --bg-card:#1e1f22; --line:#3c4043;
+    --text:#e8eaed; --muted:#9aa0a6; --accent:#8ab4f8; --accent-deep:#1a73e8;
+    --green:#81c995; --yellow:#fdd663; --red:#f28b82;
+    --mono:ui-monospace,'SFMono-Regular','JetBrains Mono',Menlo,Consolas,'Liberation Mono',monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  ::selection{background:rgba(138,180,248,.35)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;background:rgba(32,33,36,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;gap:22px;height:56px}
+  .logo{font-family:var(--mono);font-weight:700;font-size:17px;color:var(--text);display:flex;align-items:center;gap:8px}
+  .logo .mark{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:var(--bg-soft);border:1px solid var(--line);color:var(--accent);font-size:13px}
+  .logo b{color:var(--accent);font-weight:700}
+  .nav-links{display:flex;gap:18px;margin-left:auto;align-items:center}
+  .nav-links a{color:var(--muted);font-size:14px}
+  .nav-links a:hover{color:var(--text);text-decoration:none}
+  .nav-links .btn-gh{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:5px 12px;background:var(--bg-soft);color:var(--text)}
+  .nav-links .btn-gh:hover{border-color:var(--accent)}
+  .vtag{font-family:var(--mono);font-size:11px;color:var(--green);border:1px solid rgba(129,201,149,.4);border-radius:99px;padding:1px 9px}
+  @media(max-width:720px){.nav-links a.hide-m{display:none}}
+  /* ---------- hero ---------- */
+  header{padding:84px 0 60px;text-align:center;background:
+    radial-gradient(600px 300px at 20% 0%,rgba(26,115,232,.18),transparent 60%),
+    radial-gradient(600px 300px at 80% 10%,rgba(138,180,248,.12),transparent 60%)}
+  .hero-badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:22px}
+  .chip{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);background:var(--bg-soft);border-radius:99px;padding:3px 12px}
+  .chip.on{color:var(--accent);border-color:rgba(138,180,248,.45)}
+  h1{font-size:52px;line-height:1.15;letter-spacing:-1px}
+  h1 .plus{color:var(--accent)}
+  .tagline{max-width:640px;margin:18px auto 0;color:var(--muted);font-size:17px}
+  .tagline b{color:var(--text);font-weight:600}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:32px}
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:8px;padding:11px 22px;font-size:15px;font-weight:600;border:1px solid var(--line);color:var(--text);transition:.15s}
+  .btn:hover{text-decoration:none;transform:translateY(-1px)}
+  .btn.primary{background:var(--accent-deep);border-color:transparent;color:#fff}
+  .btn.primary:hover{background:#1b66d0}
+  .btn.ghost{background:var(--bg-soft)}
+  .btn.ghost:hover{border-color:var(--accent)}
+  .hero-shot{margin:52px auto 0;max-width:920px;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  .hero-shot img{display:block;width:100%}
+  .shot-bar{display:flex;gap:6px;padding:9px 12px;background:#17181a;border-bottom:1px solid var(--line)}
+  .shot-bar i{width:10px;height:10px;border-radius:50%;background:#3c4043}
+  .shot-bar i:first-child{background:#ea4335}.shot-bar i:nth-child(2){background:#fbbc04}.shot-bar i:nth-child(3){background:#34a853}
+  /* ---------- sections ---------- */
+  section{padding:64px 0}
+  .sec-head{text-align:center;margin-bottom:40px}
+  .sec-head h2{font-size:30px;letter-spacing:-.5px}
+  .sec-head p{color:var(--muted);margin-top:8px}
+  .kicker{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:2px;text-transform:uppercase}
+  /* features */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .card{background:var(--bg-card);border:1px solid var(--line);border-radius:12px;padding:22px;transition:.15s}
+  .card:hover{border-color:rgba(138,180,248,.5);transform:translateY(-2px)}
+  .card .ico{width:38px;height:38px;border-radius:9px;background:var(--bg-soft);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:14px}
+  .card h3{font-size:16.5px;margin-bottom:8px}
+  .card h3 code{font-family:var(--mono);font-size:13px;color:var(--accent);background:none}
+  .card p{font-size:13.8px;color:var(--muted)}
+  .card p b{color:var(--text);font-weight:600}
+  /* gallery */
+  .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .shots figure{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg-card)}
+  .shots img{display:block;width:100%}
+  .shots figcaption{padding:9px 13px;font-size:13px;color:var(--muted);border-top:1px solid var(--line);font-family:var(--mono)}
+  /* code */
+  .codes{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+  pre{background:#17181a;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.65;color:#c7d3e3}
+  pre .cm{color:#5f6368}pre .kw{color:#c58af9}pre .st{color:#81c995}pre .fn{color:#8ab4f8}
+  .code-label{font-family:var(--mono);font-size:12px;color:var(--muted);margin:0 0 8px 4px;display:flex;justify-content:space-between}
+  .code-label b{color:var(--accent);font-weight:600}
+  /* roadmap */
+  ul.roadmap{list-style:none;max-width:640px;margin:0 auto}
+  ul.roadmap li{padding:9px 0 9px 30px;position:relative;color:var(--muted);border-bottom:1px dashed var(--line)}
+  ul.roadmap li::before{content:'▢';position:absolute;left:4px;color:var(--accent);font-family:var(--mono)}
+  ul.roadmap li.done::before{content:'☑';color:var(--green)}
+  ul.roadmap li b{color:var(--text)}
+  /* footer */
+  footer{border-top:1px solid var(--line);padding:36px 0 46px;color:var(--muted);font-size:13.5px;background:#17181a}
+  .foot-grid{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+  footer a{color:var(--muted)}
+  footer a:hover{color:var(--accent)}
+  .foot-links{display:flex;gap:16px;flex-wrap:wrap}
+  .disclaimer{margin-top:16px;font-size:12px;color:#5f6368}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="logo" href="#"><span class="mark">&gt;_</span>eruda<b>-plus</b>&nbsp;<span class="vtag">v0.1.0</span></a>
+    <div class="nav-links">
+      <a class="hide-m" href="#features">特性</a>
+      <a class="hide-m" href="#shots">截图</a>
+      <a class="hide-m" href="#start">快速上手</a>
+      <a href="./demo.html">在线演示</a>
+      <a class="btn-gh" href="https://github.com/masgzy/eruda-plus" target="_blank" rel="noopener">★ GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="hero-badges">
+      <span class="chip on">DevTools 风格 UI</span>
+      <span class="chip on">全工具 i18n</span>
+      <span class="chip on">Block / Rewrite / Mock</span>
+      <span class="chip on">HAR 1.2</span>
+      <span class="chip">单文件 · 零依赖</span>
+      <span class="chip">MIT</span>
+    </div>
+    <h1>eruda<span class="plus">-plus</span></h1>
+    <p class="tagline">为移动端网页打造的 <b>Chrome DevTools 级调试控制台</b> —— 在
+      <a href="https://github.com/liriliri/eruda" target="_blank" rel="noopener">eruda</a>
+      之上全面增强：网络请求阻断 / 重写 / Mock / 节流、HAR 导入导出、Live Expressions、DOM 搜索，
+      <b>全工具中英双语</b>，体验与 Chrome DevTools 看齐。</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/masgzy/eruda-plus" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a class="btn ghost" href="./demo.html">在线演示 →</a>
+      <a class="btn ghost" href="https://github.com/masgzy/eruda-plus/blob/main/docs/TUTORIAL.md" target="_blank" rel="noopener">使用教程</a>
+    </div>
+    <div class="hero-shot">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <img src="./assets/v3_en_network_desktop.png" alt="eruda-plus Network panel — DevTools style" loading="lazy">
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Features</div>
+      <h2>不只是换肤，而是体验对齐</h2>
+      <p>覆盖 Console / Elements / Network / Resources / Sources / Info / Snippets / Settings 全部内置工具</p>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="ico">🎨</div><h3>DevTools 化 UI</h3><p>亮 / 暗双主题设计令牌、13px 紧凑排版、等宽数据字体、扁平弹窗、细滚动条、导航指示条，兼容上游 <b>17 套第三方主题</b>。</p></div>
+      <div class="card"><div class="ico">🌍</div><h3>全工具 i18n</h3><p>默认跟随 <b>navigator.language</b>，设置中可切换 中文 / English，即时生效、无需刷新、选择持久化。</p></div>
+      <div class="card"><div class="ico">🛜</div><h3>DevTools 网络面板</h3><p>九类筛选 Chip、Overview 时间轴、七列排序表格、迷你瀑布、状态栏、自动分屏，详情 <b>6 页签</b>含 Initiator 调用链与七段 Timing。</p></div>
+      <div class="card"><div class="ico">🚫</div><h3>阻断 · 重写 · Mock</h3><p>借鉴 <b>ProxyPin</b>：URL 黑名单（字面量 + /regex/）模拟 403，顺序 Rewrite 规则，自定义 status / contentType / body 的 Mock 响应，Slow 3G / Fast 3G / Offline 节流。</p></div>
+      <div class="card"><div class="ico">📦</div><h3>HAR 1.2 与复制</h3><p>HAR 导入导出、<b>Copy as fetch / cURL</b>、正则搜索（支持 - 排除语法）、失败请求红色高亮、Preserve Log 保留请求。</p></div>
+      <div class="card"><div class="ico">👁️</div><h3>Console 补齐</h3><p><b>Live Expressions</b> 实时表达式监控、内联正则筛选框、<b>Preserve Log</b> 刷新保留 300 条日志（带时间戳与会话分隔线）。</p></div>
+      <div class="card"><div class="ico">🔍</div><h3>Elements 补齐</h3><p><b>DOM 搜索</b>：选择器优先、全文降级，↑↓ 导航与 x/y 计数；<b>Copy selector / XPath</b> 一键复制。</p></div>
+      <div class="card"><div class="ico">🧩</div><h3>双形态接入</h3><p>完整构建 <code>dist/eruda.js</code> 单文件零依赖；或 <b>独立插件</b> <code>eruda-network-plus.js</code> 挂在官方 eruda 上，还有基于 v3.4.3 的 <code>git apply</code> 源码补丁。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="shots" style="background:var(--bg-soft)">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Screenshots</div>
+      <h2>一眼即懂</h2>
+    </div>
+    <div class="shots">
+      <figure><img src="./assets/v3_zh_network.png" alt="中文 Network 面板" loading="lazy"><figcaption>zh-CN · Network 列表 + 详情分屏</figcaption></figure>
+      <figure><img src="./assets/08-console-watch-preserve-zh.png" alt="Console Watch 与保留日志" loading="lazy"><figcaption>Console · Live Expressions + Preserve Log</figcaption></figure>
+      <figure><img src="./assets/10-elements-dom-search-zh.png" alt="Elements DOM 搜索" loading="lazy"><figcaption>Elements · DOM 搜索与导航</figcaption></figure>
+      <figure><img src="./assets/12-network-preserve-dark.png" alt="暗色主题" loading="lazy"><figcaption>Dark · 保留日志 + 404 红色高亮</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Quick Start</div>
+      <h2>三行代码接入</h2>
+    </div>
+    <div class="codes">
+      <div>
+        <div class="code-label"><b>方式 A ·</b> 增强完整版（推荐）</div>
+        <pre><span class="cm">&lt;!-- 单文件 · 零依赖 --&gt;</span>
+&lt;<span class="kw">script</span> <span class="fn">src</span>=<span class="st">"https://cdn.jsdelivr.net/gh/masgzy/eruda-plus@0.1.0/dist/eruda.js"</span>&gt;&lt;/<span class="kw">script</span>&gt;
+&lt;<span class="kw">script</span>&gt;
+  <span class="fn">eruda</span>.init();
+
+  <span class="cm">// 网络规则示例</span>
+  eruda.<span class="fn">get</span>(<span class="st">'network'</span>).<span class="fn">block</span>(<span class="st">'/api\\/tracker/'</span>);
+  eruda.<span class="fn">get</span>(<span class="st">'network'</span>).<span class="fn">mock</span>(<span class="st">'/api/user'</span>, {
+    status: <span class="st">200</span>, body: <span class="st">'{"mock":true}'</span>
+  });
+&lt;/<span class="kw">script</span>&gt;</pre>
+      </div>
+      <div>
+        <div class="code-label"><b>方式 B ·</b> 官方 eruda + 独立插件</div>
+        <pre>&lt;<span class="kw">script</span> <span class="fn">src</span>=<span class="st">"https://cdn.jsdelivr.net/npm/eruda"</span>&gt;&lt;/<span class="kw">script</span>&gt;
+&lt;<span class="kw">script</span> <span class="fn">src</span>=<span class="st">".../dist/eruda-network-plus.js"</span>&gt;&lt;/<span class="kw">script</span>&gt;
+&lt;<span class="kw">script</span>&gt;
+  eruda.<span class="fn">init</span>();
+  eruda.<span class="fn">remove</span>(<span class="st">'network'</span>);
+  eruda.<span class="fn">add</span>(<span class="kw">new</span> <span class="fn">window.erudaNetworkPlus</span>());
+&lt;/<span class="kw">script</span>&gt;
+
+<span class="cm">// 本地演示（零依赖）</span>
+<span class="cm">// git clone https://github.com/masgzy/eruda-plus</span>
+<span class="cm">// node demo/server.js  →  http://localhost:3456</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Roadmap</div>
+      <h2>路线图</h2>
+    </div>
+    <ul class="roadmap">
+      <li class="done"><b>v0.1.0</b> — Network 增强 / 全工具 i18n / DevTools 功能补齐 / 双形态交付</li>
+      <li>发布到 npm registry</li>
+      <li>WebSocket / SSE 请求捕获增强</li>
+      <li>更多语言包（日本語 / Español …）</li>
+      <li>请求对比 Diff 视图 · 规则导入导出与同步</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-grid">
+    <div>
+      <div class="logo" style="margin-bottom:10px"><span class="mark">&gt;_</span>eruda<b>-plus</b></div>
+      <p>基于 <a href="https://github.com/liriliri/eruda" target="_blank" rel="noopener">eruda v3.4.3</a> 深度增强 ·
+        灵感来自 <a href="https://github.com/wanghongenpin/proxypin" target="_blank" rel="noopener">ProxyPin</a> ·
+        UI 参照 <a href="https://github.com/ChromeDevTools/devtools-frontend" target="_blank" rel="noopener">Chrome DevTools</a></p>
+      <p style="margin-top:6px">MIT License · <a href="https://github.com/masgzy/eruda-plus/blob/main/README.md" target="_blank" rel="noopener">中文文档</a> · <a href="https://github.com/masgzy/eruda-plus/blob/main/README_EN.md" target="_blank" rel="noopener">English Docs</a></p>
+    </div>
+    <div class="foot-links" style="flex-direction:column;gap:8px">
+      <a href="https://github.com/masgzy/eruda-plus" target="_blank" rel="noopener">GitHub</a>
+      <a href="./demo.html">在线演示</a>
+      <a href="https://github.com/masgzy/eruda-plus/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/masgzy/eruda-plus/issues" target="_blank" rel="noopener">Issues</a>
+    </div>
+  </div>
+  <div class="wrap disclaimer">本项目与 Google Chrome / Chrome DevTools 官方无任何隶属关系。"DevTools" 仅用于描述 UI 风格与功能对齐目标。eruda 由 liriliri 开发并遵循 MIT 协议开源。</div>
+</footer>
+
+</body>
+</html>

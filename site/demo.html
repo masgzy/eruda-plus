@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eruda-plus · 在线演示</title>
+<meta name="description" content="eruda-plus 在线演示：打开控制台体验 DevTools 风格网络面板、阻断/重写/Mock、Live Expressions 与 DOM 搜索。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23202124'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='%238ab4f8' font-family='monospace'>&gt;_</text></svg>">
+<style>
+  :root{--bg:#202124;--soft:#292a2d;--line:#3c4043;--text:#e8eaed;--muted:#9aa0a6;--accent:#8ab4f8;--green:#81c995;
+    --mono:ui-monospace,Menlo,Consolas,monospace;--sans:-apple-system,'Segoe UI','Noto Sans SC',Roboto,'PingFang SC','Microsoft YaHei',sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 20px 90px}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:24px;font-family:var(--mono)}
+  h1 b{color:var(--accent)}
+  .tip{color:var(--muted);font-size:14px;margin:10px 0 4px;line-height:1.7}
+  .tip code{font-family:var(--mono);background:var(--soft);border:1px solid var(--line);border-radius:5px;padding:1px 7px;font-size:12.5px;color:var(--green)}
+  .banner{margin:16px 0 22px;border:1px solid rgba(253,214,99,.35);background:rgba(253,214,99,.08);color:#fdd663;border-radius:8px;padding:10px 14px;font-size:13.5px;line-height:1.6}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:18px}
+  button{font:inherit;font-size:14px;text-align:left;background:var(--soft);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:13px 15px;cursor:pointer;transition:.15s;display:block;width:100%}
+  button:hover{border-color:var(--accent);transform:translateY(-1px)}
+  button small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+  button b{color:var(--accent)}
+  a.back{color:var(--muted);font-size:13.5px;text-decoration:none}
+  a.back:hover{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="./">← 返回 eruda-plus 官网</a>
+  <h1>eruda<b>-plus</b> 在线演示</h1>
+  <p class="tip">点击右下角悬浮按钮 <code>&gt;_</code> 打开控制台（或双击页面空白处）。本页已预置演示规则，并内置请求发生器：</p>
+  <div class="banner">当前为静态托管环境。要体验 <b>完整功能</b>（重写、Mock、节流时序、HAR 导入），请在本地运行
+    <code>git clone https://github.com/masgzy/eruda-plus && cd eruda-plus && node demo/server.js</code>
+    后访问 <code>http://localhost:3456</code>。下方按钮在本页同样可用——404 / 500 响应由 Pages 服务器真实返回，正好演示失败高亮。</div>
+  <p class="tip" style="font-weight:600;color:var(--text)">请求发生器</p>
+  <div class="grid">
+    <button data-act="fetch-ok"><b>fetch</b> · 200 成功<small>GET /assets/eruda.js — 正常 JSON/脚本请求</small></button>
+    <button data-act="fetch-404"><b>fetch</b> · 404 失败<small>红色高亮 + 状态码着色</small></button>
+    <button data-act="fetch-500"><b>fetch</b> · 500 失败<small>服务器错误演示</small></button>
+    <button data-act="xhr-post"><b>XHR</b> · POST 提交<small>Content-Type: application/json</small></button>
+    <button data-act="fetch-slow"><b>fetch</b> · 慢请求<small>观察 Timing 各段耗时</small></button>
+    <button data-act="mock-demo"><b>Mock</b> · 命中演示规则<small>返回预置 Mock 响应体</small></button>
+    <button data-act="block-demo"><b>Block</b> · 命中阻断规则<small>被拦截并模拟 403</small></button>
+    <button data-act="console-demo"><b>Console</b> · 打印演示<small>log / warn / error / table</small></button>
+  </div>
+  <p class="tip" style="margin-top:24px">试着做：① 打开 Network 面板看列表与 Timing → ② 工具栏漏斗旁切换失败筛选 → ③ Elements 里搜索 <code>.grid button</code> → ④ Console 点眼睛按钮添加表达式 <code>performance.now()</code>。</p>
+</div>
+
+<script src="./assets/eruda.js"></script>
+<script>
+  eruda.init();
+  var net = eruda.get('network');
+  try {
+    net.mock('/demo/api/mock', { status: 200, contentType: 'application/json', body: '{"eruda-plus":"mock works!","from":"demo rule"}' });
+    net.block('/demo/api/blocked');
+  } catch (e) {}
+
+  function fire(act) {
+    if (act === 'fetch-ok') fetch('./assets/eruda.js').then(function (r) { return r.text(); });
+    if (act === 'fetch-404') fetch('./not-exist-404.json').catch(function () {});
+    if (act === 'fetch-500') fetch('/demo/api/server-error').catch(function () {});
+    if (act === 'xhr-post') { var x = new XMLHttpRequest(); x.open('POST', './assets/eruda.js'); x.setRequestHeader('Content-Type', 'application/json'); x.send(JSON.stringify({ demo: true, ts: Date.now() })); }
+    if (act === 'fetch-slow') fetch('./assets/eruda.js?slow=' + Math.random()).catch(function () {});
+    if (act === 'mock-demo') fetch('/demo/api/mock').then(function (r) { return r.json(); }).then(function (d) { console.log('Mock 响应:', d); });
+    if (act === 'block-demo') fetch('/demo/api/blocked').catch(function () {});
+    if (act === 'console-demo') {
+      console.log('eruda-plus 演示日志', { version: '0.1.0', lang: navigator.language });
+      console.warn('这是一条警告');
+      console.error('这是一条错误');
+      console.table([{ act: 'fetch', status: 200 }, { act: 'xhr', status: 403 }]);
+    }
+  }
+
+  document.querySelectorAll('button[data-act]').forEach(function (btn) {
+    btn.addEventListener('click', function () { fire(btn.dataset.act); });
+  });
+
+  console.log('%c eruda-plus v0.1.0 在线演示已就绪 ', 'background:#1a73e8;color:#fff;border-radius:3px');
+  fire('fetch-ok');
+</script>
+</body>
+</html>
