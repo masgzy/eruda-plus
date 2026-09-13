@@ -123,18 +123,19 @@ $status-mock: #1a73e8;
       }
     }
     .chip {
-      padding: 2px 9px;
-      border-radius: 10px;
-      font-size: 11px;
-      background: var(--contrast);
-      color: var(--primary);
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: transparent;
+      color: var(--text-color);
       cursor: pointer;
       white-space: nowrap;
       flex: none;
       user-select: none;
       &.chip-on {
-        background: var(--accent);
-        color: #fff;
+        background: var(--highlight);
+        color: var(--accent);
+        font-weight: 500;
       }
     }
     .preserve-toggle {
@@ -236,16 +237,85 @@ $status-mock: #1a73e8;
   .request-restored {
     opacity: 0.55;
   }
-  .luna-data-grid:focus {
-    .luna-data-grid-data-container {
-      .request-error.luna-data-grid-selected {
-        background: var(--console-error-background);
-      }
-    }
-  }
+
+  // Data grid density and column separators aligned with Chrome DevTools
+  // networkLogView.css (27px header, 21px rows, 1px column rules).
+  // NOTE: rules target .luna-data-grid-node td so the grid's own filler
+  // rows keep height:auto and absorb the leftover space.
   .luna-data-grid {
     border-left: none;
     border-right: none;
+    .luna-data-grid-header-container {
+      height: 28px;
+    }
+    th {
+      height: 27px;
+      padding: 0 8px;
+      font-size: $font-size-s;
+      font-weight: 400;
+      color: var(--primary);
+    }
+    .luna-data-grid-node {
+      td {
+        height: 21px;
+        padding: 0 8px;
+        font-size: $font-size-s;
+        border-left: 1px solid var(--border);
+        vertical-align: middle;
+        &:first-child {
+          border-left: none;
+        }
+      }
+    }
+  }
+
+  // Mini waterfall cell (DevTools NetworkWaterfallColumn colors).
+  .wf-cell {
+    position: relative;
+    display: block;
+    height: 15px;
+    margin: 0 2px;
+    min-width: 4px;
+  }
+  .wf-seg {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    min-width: 1px;
+    background: #1a73e8;
+    border-radius: 1px;
+  }
+  .wf-queueing {
+    background: #c9cdd4;
+  }
+  .wf-dns {
+    background: #12b5cb;
+  }
+  .wf-connect {
+    background: #f9ab00;
+  }
+  .wf-ssl {
+    background: #a142f4;
+  }
+  .wf-sent {
+    background: #7baaf7;
+  }
+  .wf-wait {
+    background: #1e8e3e;
+  }
+  .wf-download {
+    background: #1a73e8;
+  }
+  .wf-line {
+    top: 6px;
+    bottom: 6px;
+    min-width: 1px;
+  }
+  .wf-error {
+    left: 0 !important;
+    right: 0;
+    width: auto !important;
+    background: var(--console-error-foreground);
   }
 
   // Rules panel: Block / Rewrite / Mock

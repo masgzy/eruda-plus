@@ -93,24 +93,25 @@ export function isDarkTheme(theme) {
 
 // prettier-ignore
 export default {
-  // Chrome DevTools "Light" palette.
+  // Chrome DevTools "Light" palette (Material 3 tokens, see
+  // devtools-frontend front_end/design_system_tokens.css).
   Light: createLightTheme({
-    darkerBackground: '#f1f3f4',
+    darkerBackground: '#f1f4fa',
     background: '#ffffff',
-    foreground: '#202124',
-    selectForeground: '#202124',
-    accent: '#1a73e8',
-    highlight: '#e8f0fe',
-    border: '#dadce0',
-    primary: '#202124',
+    foreground: '#1f1f1f',
+    selectForeground: '#1f1f1f',
+    accent: '#0b57d0',
+    highlight: '#d3e3fd',
+    border: '#d5dae3',
+    primary: '#1f1f1f',
     contrast: '#f8f9fa',
     varColor: '#c80000',
     stringColor: '#1a1aa6',
     keywordColor: '#881280',
     numberColor: '#1c00cf',
-    operatorColor: '#5f6368',
-    linkColor: '#1a73e8',
-    textColor: '#5f6368',
+    operatorColor: '#444746',
+    linkColor: '#0b57d0',
+    textColor: '#444746',
     tagNameColor: '#881280',
     functionColor: '#222',
     attributeNameColor: '#994500',
@@ -130,7 +131,7 @@ export default {
     foreground: '#e8eaed',
     selectForeground: '#e8eaed',
     accent: '#8ab4f8',
-    highlight: '#3c4043',
+    highlight: '#004a77',
     border: '#3c4043',
     primary: '#e8eaed',
     contrast: '#2b2c2f',

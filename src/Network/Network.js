@@ -30,6 +30,7 @@ import {
   absoluteUrl,
   formatBytes,
   formatMs,
+  getTimingSegments,
   THROTTLE_PROFILES,
   setLang,
   getLang,
@@ -127,10 +128,52 @@ export default class Network extends Tool {
       { id: 'method', title: t('Method'), sortable: true, weight: 10 },
       { id: 'status', title: t('Status'), sortable: true, weight: 10 },
       { id: 'type', title: t('Type'), sortable: true, weight: 10 },
-      { id: 'initiator', title: t('Initiator'), sortable: true, weight: 16 },
+      { id: 'initiator', title: t('Initiator'), sortable: true, weight: 14 },
       { id: 'size', title: t('Size'), sortable: true, weight: 10 },
-      { id: 'time', title: t('Time'), sortable: true, weight: 14 },
+      { id: 'time', title: t('Time'), sortable: true, weight: 10 },
+      { id: 'waterfall', title: t('Waterfall'), sortable: false, weight: 16 },
     ]
+  }
+
+  // Build the mini waterfall cell (DevTools NetworkWaterfallColumn style).
+  // Segment left/width are relative to the request's own duration; the
+  // container is aligned to the global timeline in _updateWaterfallBars().
+  _waterfallCell(request) {
+    const div = document.createElement('div')
+    div.className = c('wf-cell')
+    request._wfEl = div
+    const timing = getTimingSegments(request)
+    const total = timing.total || request.time || 0
+    if (!(total > 0)) return div
+    if (isFailed(request) || request.blocked) {
+      const seg = document.createElement('div')
+      seg.className = c('wf-seg') + ' ' + c('wf-error')
+      div.appendChild(seg)
+      return div
+    }
+    each(timing.segments, (seg) => {
+      if (!(seg.to > seg.from)) return
+      const el = document.createElement('div')
+      let cls = c('wf-seg') + ' ' + c('wf-' + seg.cls)
+      if (seg.cls === 'wait') cls += ' ' + c('wf-line')
+      el.className = cls
+      el.style.left = (seg.from / total) * 100 + '%'
+      el.style.width = Math.max(((seg.to - seg.from) / total) * 100, 0.8) + '%'
+      div.appendChild(el)
+    })
+    return div
+  }
+  _updateWaterfallBars() {
+    const range = this._wfRange
+    if (!range || !(range.span > 0)) return
+    each(this._requests, (request) => {
+      const el = request._wfEl
+      if (!el) return
+      const start = ((request.startTime - range.t0) / range.span) * 100
+      const width = Math.max(((request.time || 0) / range.span) * 100, 0.5)
+      el.style.left = start + '%'
+      el.style.width = width + '%'
+    })
   }
   _onI18n = () => {
     this._applyI18n()
@@ -239,6 +282,7 @@ export default class Network extends Tool {
           initiator: initiatorLabel(request.initiator),
           size: request.size,
           time: request.displayTime,
+          waterfall: this._waterfallCell(request),
         }
         if (request._gridNode) {
           request._gridNode.data = gridData
@@ -620,6 +664,7 @@ export default class Network extends Tool {
         initiator: initiatorLabel(request.initiator),
         size: request.size,
         time: request.displayTime,
+        waterfall: this._waterfallCell(request),
       }
       if (request._gridNode) {
         request._gridNode.data = data
@@ -671,6 +716,7 @@ export default class Network extends Tool {
         initiator: initiatorLabel(request.initiator),
         size: request.size,
         time: request.displayTime,
+        waterfall: this._waterfallCell(request),
       }
       if (request._gridNode) {
         request._gridNode.data = data
@@ -1030,29 +1076,40 @@ export default class Network extends Tool {
 
     const rows = []
     each(this._requests, (request) => rows.push(request))
-    if (rows.length === 0) return
-    let t0 = rows[0].startTime
-    let t1 = rows[0].startTime
+    let t0 = Infinity
+    let t1 = -Infinity
     each(rows, (r) => {
       if (r.startTime < t0) t0 = r.startTime
       const end = r.startTime + (r.time || 0)
       if (end > t1) t1 = end
     })
+    if (!isFinite(t0)) {
+      this._wfRange = null
+      return
+    }
     const span = Math.max(t1 - t0, 1)
-    const bands = 9
-    const bandH = h / bands
+    this._wfRange = { t0, span }
+    this._updateWaterfallBars()
+
+    // Same constants as Chrome DevTools NetworkOverview.js:
+    // 3px bands, 5px top padding and a 10px minimum band width.
+    const BAND_HEIGHT = 3
+    const PADDING = 5
+    const numBands = Math.max((((h - PADDING - 1) / BAND_HEIGHT) - 1) | 0, 1)
+    const bandH = h / numBands
     ctx.globalAlpha = 0.9
     each(rows, (r, i) => {
       const x = ((r.startTime - t0) / span) * w
       const x2 = ((r.startTime + (r.time || 0) - t0) / span) * w
       const wpx = Math.max(x2 - x, 2)
-      const y = (i % bands) * bandH + 1
-      let color = '#35a853'
+      const y = (i % numBands) * bandH + 1
+      // Mid tones that stay readable on both light and dark themes.
+      let color = 'rgba(95,99,104,0.9)'
       if (r.blocked || r.status === 0 || (typeof r.status === 'number' && r.status >= 400))
-        color = '#d93025'
-      else if (r.mock) color = '#1a73e8'
-      else if (typeof r.status === 'number' && r.status >= 300) color = '#f5a623'
-      else if (r.status === 'pending') color = '#9aa0a6'
+        color = 'rgba(217,48,37,0.9)'
+      else if (r.mock) color = 'rgba(11,87,208,0.9)'
+      else if (typeof r.status === 'number' && r.status >= 300) color = 'rgba(230,145,56,0.95)'
+      else if (r.status === 'pending') color = 'rgba(154,160,166,0.7)'
       ctx.fillStyle = color
       ctx.fillRect(x, y, wpx, Math.max(bandH - 2, 2))
     })

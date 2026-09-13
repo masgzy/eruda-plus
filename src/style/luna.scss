@@ -192,19 +192,14 @@
       }
     }
     .luna-data-grid-data-container {
+      // Chrome DevTools data grids have no zebra stripes — kill luna's
+      // native tr:nth-child(even) background in both themes.
+      tr:nth-child(even) {
+        background: transparent;
+      }
       .luna-data-grid-node.luna-data-grid-selected,
       .luna-data-grid-node.luna-data-grid-selectable:hover {
         background: var(--highlight);
-      }
-      tr:nth-child(even) {
-        background: var(--contrast);
-      }
-    }
-    &:focus {
-      .luna-data-grid-data-container {
-        .luna-data-grid-node.luna-data-grid-selected {
-          background: var(--accent);
-        }
       }
     }
   }

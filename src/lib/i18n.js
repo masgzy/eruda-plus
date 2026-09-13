@@ -423,6 +423,7 @@ const zh = {
   Size: '大小',
   Time: '耗时',
   Initiator: '发起者',
+  Waterfall: '时间线',
   Total: '总计',
   Header: '标头',
   'Request URL': '请求网址',
