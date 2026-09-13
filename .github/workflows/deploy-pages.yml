@@ -1,0 +1,58 @@
+# ============================================================================
+# Deploy the landing site (site/) to GitHub Pages.
+#
+# Why the official Actions flow instead of a `gh-pages` branch?
+#   1. No extra branch pollution — the site is built straight from `site/`
+#      on the default branch; nothing to keep in sync or force-push.
+#   2. Atomic deployments with built-in rollback via the `github-pages`
+#      environment, and least-privilege OIDC (`id-token: write`).
+#   3. The `CNAME` file inside `site/` is shipped with the artifact, so the
+#      custom domain (eruda.cc.cd) is applied automatically on every deploy.
+#
+# Repo settings to enable once:
+#   Settings → Pages → Build and deployment → Source = "GitHub Actions"
+# Custom domain DNS (eruda.cc.cd):
+#   CNAME  eruda.cc.cd  →  masgzy.github.io.
+#   (or A/AAAA records to the Pages anycast IPs if using an apex)
+# ============================================================================
+
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
