@@ -1,6 +1,6 @@
 {
   "name": "eruda-plus",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Enhanced mobile web console: eruda with Chrome DevTools experience (bilingual UI, DevTools-style Network panel, block/rewrite/mock/throttle, HAR, Live Expressions and more)",
   "main": "eruda.js",
   "browserslist": [

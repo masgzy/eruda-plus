@@ -16,6 +16,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-13
+
+UI 保真度版本：将网络面板与全局设计令牌进一步对齐 Chrome DevTools 官方源码。
+
+### 中文
+
+#### 变更
+
+- **网络面板新增 Waterfall（时间线）列**：构建版列表与插件形态对齐，彩色分段按全局时间轴对齐（与 DevTools NetworkWaterfallColumn 同色系：DNS 青 / 连接黄 / SSL 紫 / 等待绿线 / 下载蓝），失败请求整条红色
+- **Overview 时间轴重写**：采用 DevTools NetworkOverview.js 同款常量（3px 条带 / 5px 顶部留白 / 最小 10px 条宽），改为中性的双主题可读配色
+- **设计令牌对齐 Material 3（devtools-frontend design_system_tokens.css）**：主色 `#1a73e8` → `#0b57d0`（primary40），选中行 `#e8f0fe` → `#d3e3fd`（primary90），工具栏底色 → `#f1f4fa`（surface1），正文 `#202124` → `#1f1f1f`（neutral10），暗色选中行 → `#004a77`（tonal container）
+- **数据网格密度对齐 networkLogView.css**：表头 27px / 数据行 21px / 12px 字号，新增 1px 列分隔线，选中行为色调蓝底而非实色蓝底
+- **筛选 Chip 重绘**：无边框透明底，选中态浅蓝胶囊（DevTools filter 风格）
+- **移除数据表格斑马纹**（DevTools 所有表格均无斑马纹），修复暗色主题下原生斑马纹白底穿透的问题
+
+#### 修复
+
+- 暗色主题下部分数据行被 luna 原生斑马纹渲染为白底，导致"白底白字"不可读的问题
+
+### English
+
+UI fidelity release: aligns the Network panel and global design tokens closer
+to the official Chrome DevTools source.
+
+#### Changed
+
+- **New Waterfall column in the Network list**: the full build now matches the
+  plugin form — colored segments aligned to a global timeline using the same
+  palette as DevTools' NetworkWaterfallColumn (cyan DNS / yellow connecting /
+  purple SSL / green waiting line / blue download); failed requests render a
+  full red bar
+- **Overview timeline rewritten** with the exact constants from DevTools'
+  NetworkOverview.js (3px bands / 5px padding / 10px min band width) and
+  theme-neutral readable colors
+- **Design tokens aligned to Material 3** (devtools-frontend
+  design_system_tokens.css): primary `#1a73e8` → `#0b57d0` (primary40),
+  selection `#e8f0fe` → `#d3e3fd` (primary90), toolbar → `#f1f4fa` (surface1),
+  text `#202124` → `#1f1f1f` (neutral10), dark selection → `#004a77`
+- **Data grid density per networkLogView.css**: 27px header / 21px rows /
+  12px font, 1px column separators, tonal-blue selection instead of solid blue
+- **Filter chips redrawn**: borderless with a tonal pill for the active chip
+  (DevTools filter style)
+- **Zebra stripes removed** from all data grids (DevTools has none), which
+  also fixes the native luna zebra leaking through in dark theme
+
+#### Fixed
+
+- Rows rendered with a white background under dark theme caused by luna's
+  native `tr:nth-child(even)` zebra color
+
 ## [0.1.0] - 2026-09-13
 
 首个开源版本。基于 [eruda](https://github.com/liriliri/eruda) v3.4.3 深度增强，
@@ -141,5 +191,6 @@ Chrome DevTools experience to mobile web debugging.
 - `dist/eruda-network-plus.js` — standalone network panel plugin
 - `patch/eruda-devtools-edition.patch` — source patch based on eruda v3.4.3
 
-[Unreleased]: https://github.com/masgzy/eruda-plus/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/masgzy/eruda-plus/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/masgzy/eruda-plus/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/masgzy/eruda-plus/releases/tag/v0.1.0
