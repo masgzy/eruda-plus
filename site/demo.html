@@ -24,14 +24,19 @@
   button b{color:var(--accent)}
   a.back{color:var(--muted);font-size:13.5px;text-decoration:none}
   a.back:hover{color:var(--accent)}
+  /* Embedded-in-homepage mode: hide the page chrome, show only the
+     request buttons so the iframe stays focused on the tool itself. */
+  body.embedded{padding:14px 14px 60px}
+  body.embedded .hide-emb{display:none!important}
+  body.embedded .grid button{padding:9px 12px;font-size:13px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <a class="back" href="./">← 返回 eruda-plus 官网</a>
-  <h1>eruda<b>-plus</b> 在线演示</h1>
-  <p class="tip">点击右下角悬浮按钮 <code>&gt;_</code> 打开控制台（或双击页面空白处）。本页已预置演示规则，并内置请求发生器：</p>
-  <div class="banner">当前为静态托管环境。要体验 <b>完整功能</b>（重写、Mock、节流时序、HAR 导入），请在本地运行
+  <a class="back hide-emb" href="./">← 返回 eruda-plus 官网</a>
+  <h1 class="hide-emb">eruda<b>-plus</b> 在线演示</h1>
+  <p class="tip hide-emb">点击右下角悬浮按钮 <code>&gt;_</code> 打开控制台（或双击页面空白处）。本页已预置演示规则，并内置请求发生器：</p>
+  <div class="banner hide-emb">当前为静态托管环境。要体验 <b>完整功能</b>（重写、Mock、节流时序、HAR 导入），请在本地运行
     <code>git clone https://github.com/masgzy/eruda-plus && cd eruda-plus && node demo/server.js</code>
     后访问 <code>http://localhost:3456</code>。下方按钮在本页同样可用——404 / 500 响应由 Pages 服务器真实返回，正好演示失败高亮。</div>
   <p class="tip" style="font-weight:600;color:var(--text)">请求发生器</p>
@@ -77,8 +82,24 @@
     btn.addEventListener('click', function () { fire(btn.dataset.act); });
   });
 
-  console.log('%c eruda-plus v0.1.0 在线演示已就绪 ', 'background:#1a73e8;color:#fff;border-radius:3px');
+  console.log('%c eruda-plus v0.1.1 在线演示已就绪 ', 'background:#3451b2;color:#fff;border-radius:3px');
+
+  // Embedded-in-homepage mode: auto-open the Network panel so the demo is
+  // immediately visible inside the iframe; standalone visitors still get
+  // the full page with the header.
+  var embedded = window.self !== window.top
+  if (embedded) document.body.classList.add('embedded')
   fire('fetch-ok');
+  fire('fetch-404');
+  setTimeout(function () {
+    fire('fetch-slow');
+    if (embedded) {
+      try {
+        eruda.show();
+        eruda.get('network').show();
+      } catch (e) {}
+    }
+  }, 400);
 </script>
 </body>
 </html>
